@@ -44,7 +44,7 @@ targets += [
     .target(name: "WindowsKit", dependencies: ["WinFormats", "EmuSupport"]),
     .executableTarget(
         name: "Attic",
-        dependencies: ["PlatformKit", "ControllerKit", "WindowsKit", "CoreTestSupport"],
+        dependencies: ["PlatformKit", "ControllerKit", "WindowsKit", "CoreTestSupport", "GBCore", "EmulatorKit"],
         path: "Sources/AtticApp"
     ),
     .executableTarget(name: "controller-dump", dependencies: ["ControllerKit"]),

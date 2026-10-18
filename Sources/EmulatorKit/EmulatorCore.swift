@@ -55,6 +55,10 @@ public protocol EmulatorCore: AnyObject {
     func drainAudio(_ sink: (UnsafeBufferPointer<Int16>) -> Void)
     /// Battery-backed save data and a dirty flag, if the media has any.
     var batterySave: BatterySave? { get }
+    /// Clears the dirty flag after the host has written `batterySave` to disk.
+    func markBatterySaved()
+    /// Restores previously saved battery data.
+    func loadBatterySave(_ bytes: [UInt8])
 
     func saveState(into writer: inout StateWriter)
     func loadState(from reader: inout StateReader) throws
