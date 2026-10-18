@@ -159,9 +159,14 @@ extension GameBoyCore {
             }
         case 0xFF04: divWrite()
         case 0xFF05:
-            tima = v
-            timaReloadPending = false   // a write in the cycle after overflow cancels the reload
-        case 0xFF06: tma = v
+            // A write in the cycle of the overflow cancels the reload; in the reload cycle itself it is ignored.
+            if !timaJustReloaded {
+                tima = v
+                timaReloadPending = false
+            }
+        case 0xFF06:
+            tma = v
+            if timaJustReloaded { tima = v }
         case 0xFF07: timerControlWrite(v & 7)
         case 0xFF0F: iflag = v & 0x1F
         case 0xFF10...0xFF3F: apuWrite(addr, v)
@@ -195,10 +200,12 @@ extension GameBoyCore {
         case 0xFF68: bcps = v & 0xBF
         case 0xFF69:
             bgPalRAM[Int(bcps & 0x3F)] = v
+            paletteDirty = true
             if bcps & 0x80 != 0 { bcps = 0x80 | ((bcps &+ 1) & 0x3F) }
         case 0xFF6A: ocps = v & 0xBF
         case 0xFF6B:
             objPalRAM[Int(ocps & 0x3F)] = v
+            paletteDirty = true
             if ocps & 0x80 != 0 { ocps = 0x80 | ((ocps &+ 1) & 0x3F) }
         case 0xFF6C: opri = v & 1
         case 0xFF70:
@@ -221,14 +228,12 @@ extension GameBoyCore {
     }
 
     @inline(__always) func timerTickM() {
+        timaJustReloaded = false
         if timaReloadPending {
-            if timaReloadDelay > 0 {
-                timaReloadDelay -= 1
-            } else {
-                timaReloadPending = false
-                tima = tma
-                iflag |= 0x04
-            }
+            timaReloadPending = false
+            tima = tma
+            iflag |= 0x04
+            timaJustReloaded = true
         }
         let old = divCounter
         divCounter &+= 4
@@ -241,7 +246,6 @@ extension GameBoyCore {
         if tima == 0xFF {
             tima = 0
             timaReloadPending = true
-            timaReloadDelay = 1
         } else {
             tima &+= 1
         }
@@ -317,21 +321,25 @@ extension GameBoyCore {
 
     func startOAMDMA(_ v: UInt8) {
         dmaReg = v
-        oamDMASource = Int(v) << 8
-        oamDMAIndex = 0
-        oamDMADelay = 2
-        oamDMAActive = false
+        oamDMAPendingSource = Int(v) << 8
+        oamDMADelay = oamDMAStartDelay    // a running transfer keeps going until the new one takes over
     }
 
     func oamDMATick() {
         if oamDMADelay > 0 {
             oamDMADelay -= 1
-            if oamDMADelay == 0 { oamDMAActive = true }
-            return
+            if oamDMADelay == 0 {
+                oamDMAActive = true
+                oamDMAIndex = 0
+                oamDMASource = oamDMAPendingSource
+                return
+            }
         }
-        oam[oamDMAIndex] = dmaRead(oamDMASource &+ oamDMAIndex)
-        oamDMAIndex += 1
-        if oamDMAIndex >= 160 { oamDMAActive = false }
+        if oamDMAActive {
+            oam[oamDMAIndex] = dmaRead(oamDMASource &+ oamDMAIndex)
+            oamDMAIndex += 1
+            if oamDMAIndex >= 160 { oamDMAActive = false }
+        }
     }
 
     // MARK: CGB VRAM DMA

@@ -166,28 +166,50 @@ extension GameBoyCore {
         return 0xFF00_0000 | (r8 << 16) | (g8 << 8) | b8
     }
 
+    /// Rebuilds the cached colour tables: [0..<32] CGB background, [64..<96] CGB sprites.
+    func rebuildPaletteCache() {
+        paletteDirty = false
+        for i in 0..<32 {
+            colorLUT[i] = cgbColor(bgPalRAM, i)
+            colorLUT[64 + i] = cgbColor(objPalRAM, i)
+        }
+    }
+
     func renderScanline() {
+        if paletteDirty { rebuildPaletteCache() }
         let row = frame + ly * 160
         let bgEnabled = lcdc & 0x01 != 0
 
-        // Background and window. On DMG, LCDC bit 0 off blanks both; on CGB it only drops BG priority.
-        let winActive = lcdc & 0x20 != 0 && windowTriggered && (isCGB || bgEnabled) && Int(wx) < 167
+        if !isCGB {
+            // DMG palettes for this line: [32..<36] background, [36..<40] OBP0, [40..<44] OBP1.
+            for i in 0..<4 {
+                colorLUT[32 + i] = dmgColors[Int((bgp >> UInt8(i * 2)) & 3)]
+                colorLUT[36 + i] = dmgColors[Int((obp0 >> UInt8(i * 2)) & 3)]
+                colorLUT[40 + i] = dmgColors[Int((obp1 >> UInt8(i * 2)) & 3)]
+            }
+            if !bgEnabled {          // LCDC bit 0 off blanks background and window on DMG
+                let white = dmgColors[0]
+                for x in 0..<160 {
+                    lineBG[x] = 0
+                    lineBGPrio[x] = false
+                    row[x] = white
+                }
+                if lcdc & 0x02 != 0 { renderSprites(row) }
+                return
+            }
+        }
+
+        let winActive = lcdc & 0x20 != 0 && windowTriggered && Int(wx) < 167
         let winX0 = Int(wx) - 7
         var usedWindow = false
         let bgMapBase = lcdc & 0x08 != 0 ? 0x1C00 : 0x1800
         let winMapBase = lcdc & 0x40 != 0 ? 0x1C00 : 0x1800
         let unsignedTiles = lcdc & 0x10 != 0
 
-        var lo: UInt8 = 0, hi: UInt8 = 0, attr: UInt8 = 0
-        for x in 0..<160 {
-            if !isCGB && !bgEnabled {
-                lineBG[x] = 0
-                lineBGPrio[x] = false
-                row[x] = dmgColors[0]
-                continue
-            }
+        var x = 0
+        while x < 160 {
             let inWindow = winActive && x >= winX0
-            var mx: Int, my: Int, mapBase: Int
+            let mx: Int, my: Int, mapBase: Int
             if inWindow {
                 mx = x - winX0
                 my = windowLine
@@ -199,26 +221,30 @@ extension GameBoyCore {
                 mapBase = bgMapBase
             }
             let fx = mx & 7
-            if x == 0 || fx == 0 || (inWindow && x == max(winX0, 0)) {
-                let mapAddr = mapBase + (my >> 3) * 32 + (mx >> 3)
-                let tile = vram[mapAddr]
-                attr = isCGB ? vram[0x2000 + mapAddr] : 0
-                var fy = my & 7
-                if attr & 0x40 != 0 { fy = 7 - fy }
-                let dataOffset = unsignedTiles ? Int(tile) * 16 : 0x1000 + Int(Int8(bitPattern: tile)) * 16
-                let bankOffset = attr & 0x08 != 0 ? 0x2000 : 0
-                lo = vram[bankOffset + dataOffset + fy * 2]
-                hi = vram[bankOffset + dataOffset + fy * 2 + 1]
+            var run = min(8 - fx, 160 - x)
+            if !inWindow && winActive && winX0 > x { run = min(run, winX0 - x) }   // window starts mid-tile
+
+            let mapAddr = mapBase + (my >> 3) * 32 + (mx >> 3)
+            let tile = vram[mapAddr]
+            let attr: UInt8 = isCGB ? vram[0x2000 + mapAddr] : 0
+            var fy = my & 7
+            if attr & 0x40 != 0 { fy = 7 - fy }
+            let dataOffset = unsignedTiles ? Int(tile) * 16 : 0x1000 + Int(Int8(bitPattern: tile)) * 16
+            let bankOffset = attr & 0x08 != 0 ? 0x2000 : 0
+            let lo = vram[bankOffset + dataOffset + fy * 2]
+            let hi = vram[bankOffset + dataOffset + fy * 2 + 1]
+            let flipX = attr & 0x20 != 0
+            let prio = isCGB && attr & 0x80 != 0
+            let lutBase = isCGB ? Int(attr & 7) * 4 : 32
+
+            for k in 0..<run {
+                let bit = UInt8(flipX ? fx + k : 7 - (fx + k))
+                let idx = Int((hi >> bit) & 1) << 1 | Int((lo >> bit) & 1)
+                lineBG[x + k] = UInt8(idx)
+                lineBGPrio[x + k] = prio
+                row[x + k] = colorLUT[lutBase + idx]
             }
-            let bit = attr & 0x20 != 0 ? fx : 7 - fx
-            let idx = Int((hi >> UInt8(bit)) & 1) << 1 | Int((lo >> UInt8(bit)) & 1)
-            lineBG[x] = UInt8(idx)
-            lineBGPrio[x] = isCGB && attr & 0x80 != 0
-            if isCGB {
-                row[x] = cgbColor(bgPalRAM, Int(attr & 7) * 4 + idx)
-            } else {
-                row[x] = dmgColors[Int((bgp >> UInt8(idx * 2)) & 3)]
-            }
+            x += run
         }
         if usedWindow { windowLine += 1 }
 
@@ -282,10 +308,9 @@ extension GameBoyCore {
                     }
                     if bgWins { continue }
                     if isCGB {
-                        row[x] = cgbColor(objPalRAM, Int(attr & 7) * 4 + idx)
+                        row[x] = colorLUT[64 + Int(attr & 7) * 4 + idx]
                     } else {
-                        let pal = attr & 0x10 != 0 ? obp1 : obp0
-                        row[x] = dmgColors[Int((pal >> UInt8(idx * 2)) & 3)]
+                        row[x] = colorLUT[(attr & 0x10 != 0 ? 40 : 36) + idx]
                     }
                 }
             }

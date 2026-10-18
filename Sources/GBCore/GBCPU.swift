@@ -264,6 +264,7 @@ extension GameBoyCore {
 
         let op = read8(pc)
         if haltBug { haltBug = false } else { pc &+= 1 }
+        if op == 0x40 { hitLDBB = true }
         execute(op)
 
         if applyEI && eiPending {

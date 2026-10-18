@@ -68,10 +68,10 @@ extension GameBoyCore {
 
         s = ByteSink()
         s.u8(ie); s.u8(iflag); s.u16(divCounter); s.u8(tima); s.u8(tma); s.u8(tac)
-        s.bool(timaReloadPending); s.int(timaReloadDelay)
+        s.bool(timaReloadPending); s.bool(timaJustReloaded)
         s.u8(sb); s.u8(sc); s.int(serialBits); s.int(serialCounter)
         s.u8(p1Select); s.u8(joyButtons); s.u8(joyDpad)
-        s.u8(dmaReg); s.bool(oamDMAActive); s.int(oamDMADelay); s.int(oamDMAIndex); s.int(oamDMASource)
+        s.u8(dmaReg); s.bool(oamDMAActive); s.int(oamDMADelay); s.int(oamDMAIndex); s.int(oamDMASource); s.int(oamDMAPendingSource)
         s.u16(hdmaSource); s.u16(hdmaDest); s.bool(hdmaActive); s.bool(hdmaHBlank); s.int(hdmaBlocks); s.bool(hdmaPending)
         s.bool(doubleSpeed); s.bool(speedArmed); s.int(vramBank); s.int(wramBank)
         s.u8(bcps); s.u8(ocps); s.u8(opri)
@@ -124,14 +124,15 @@ extension GameBoyCore {
             case "MEM ":
                 try s.raw(wram, 0x8000); try s.raw(vram, 0x4000); try s.raw(oam, 0xA0); try s.raw(hram, 0x80)
                 try s.raw(cartRAM, max(cartRAMSize, 1)); try s.raw(bgPalRAM, 64); try s.raw(objPalRAM, 64)
+                paletteDirty = true
             case "IO  ":
                 ie = try s.u8(); iflag = try s.u8(); divCounter = try s.u16()
                 tima = try s.u8(); tma = try s.u8(); tac = try s.u8()
-                timaReloadPending = try s.bool(); timaReloadDelay = try s.int()
+                timaReloadPending = try s.bool(); timaJustReloaded = try s.bool()
                 sb = try s.u8(); sc = try s.u8(); serialBits = try s.int(); serialCounter = try s.int()
                 p1Select = try s.u8(); joyButtons = try s.u8(); joyDpad = try s.u8()
                 dmaReg = try s.u8(); oamDMAActive = try s.bool(); oamDMADelay = try s.int()
-                oamDMAIndex = try s.int(); oamDMASource = try s.int()
+                oamDMAIndex = try s.int(); oamDMASource = try s.int(); oamDMAPendingSource = try s.int()
                 hdmaSource = try s.u16(); hdmaDest = try s.u16(); hdmaActive = try s.bool()
                 hdmaHBlank = try s.bool(); hdmaBlocks = try s.int(); hdmaPending = try s.bool()
                 doubleSpeed = try s.bool(); speedArmed = try s.bool(); vramBank = try s.int(); wramBank = try s.int()

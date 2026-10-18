@@ -6,8 +6,11 @@ public struct ManifestEntry: Codable, Equatable {
     public var path: String
     public var sha256: String?
     public var maxFrames: Int
-    public var criterion: String
-    public var expected: String   // "pass" or "known-fail"
+    public var criterion: String       // "serial", "cartram", "frameHash" or "mooneye"
+    public var expected: String        // "pass" or "known-fail"
+    public var model: String?          // "dmg", "cgb" or nil for automatic
+    public var expectedHash: String?   // for criterion "frameHash": XXH64 in lowercase hex
+    public var note: String?
 }
 
 public struct Manifest: Codable, Equatable {

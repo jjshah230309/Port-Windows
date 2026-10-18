@@ -20,7 +20,15 @@ jobs:
       - run: swift build
       - run: swift test
       - run: swift run core-selftest
-      - run: swift run rom-test
+      - name: Fetch freely redistributable test ROMs (acid2, Mooneye)
+        run: |
+          apt-get update -qq && apt-get install -y -qq curl unzip ca-certificates
+          scripts/fetch-test-roms.sh
+      - name: ROM test suites (fails only on regressions)
+        run: swift run -c release rom-test --all --md report.md
+      - name: Add report to the job summary
+        if: always()
+        run: cat report.md >> "$GITHUB_STEP_SUMMARY" || true
 
   macos:
     name: App (macOS 15)

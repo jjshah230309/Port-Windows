@@ -32,12 +32,17 @@ struct SquareChannel {
         (enabled && dac) ? Int((squarePatterns[duty] >> UInt8(dutyPos)) & 1) * volume : 0
     }
 
-    @inline(__always) mutating func step(_ dots: Int) {
+    /// Returns true only when the channel's output value actually changed (so the mix must be recomputed).
+    @inline(__always) mutating func step(_ dots: Int) -> Bool {
         timer -= dots
+        guard timer <= 0 else { return false }
+        let pattern = squarePatterns[duty]
+        let before = (pattern >> UInt8(dutyPos)) & 1
         while timer <= 0 {
             timer += (2048 - freq) * 4
             dutyPos = (dutyPos + 1) & 7
         }
+        return before != (pattern >> UInt8(dutyPos)) & 1 && volume != 0 && enabled && dac
     }
 
     mutating func clockLength() {
@@ -127,15 +132,18 @@ struct NoiseChannel {
     @inline(__always) var period: Int { noiseDivisors[divisorCode] << clockShift }
     @inline(__always) var digital: Int { (enabled && dac) ? (~lfsr & 1) * volume : 0 }
 
-    @inline(__always) mutating func step(_ dots: Int) {
-        guard clockShift < 14 else { return }
+    @inline(__always) mutating func step(_ dots: Int) -> Bool {
+        guard clockShift < 14 else { return false }
         timer -= dots
+        guard timer <= 0 else { return false }
+        let before = lfsr & 1
         while timer <= 0 {
             timer += period
             let x = (lfsr & 1) ^ ((lfsr >> 1) & 1)
             lfsr = (lfsr >> 1) | (x << 14)
             if widthMode { lfsr = (lfsr & ~0x40) | (x << 6) }
         }
+        return before != lfsr & 1 && volume != 0 && enabled && dac
     }
 
     mutating func clockLength() {
@@ -217,6 +225,7 @@ extension GameBoyCore {
     @inline(__always) var nextStepClocksLength: Bool { apu.frameStep & 1 == 0 }
 
     func apuWrite(_ addr: UInt16, _ v: UInt8) {
+        apuMixDirty = true
         if addr >= 0xFF30 {
             apuRegs[Int(addr) - 0xFF10] = v
             return
@@ -251,6 +260,7 @@ extension GameBoyCore {
         }
         guard addr >= 0xFF10 else { return }
         apuRegs[Int(addr) - 0xFF10] = v
+        let clocks = nextStepClocksLength      // read before any channel is modified in place
         switch addr {
         case 0xFF10:
             apu.ch1.sweepPeriod = Int((v >> 4) & 7)
@@ -263,7 +273,7 @@ extension GameBoyCore {
         case 0xFF13: apu.ch1.freq = (apu.ch1.freq & 0x700) | Int(v)
         case 0xFF14:
             apu.ch1.freq = (apu.ch1.freq & 0xFF) | (Int(v & 7) << 8)
-            squareLengthAndTrigger(&apu.ch1, v, hasSweep: true)
+            squareLengthAndTrigger(&apu.ch1, v, hasSweep: true, nextClocks: clocks)
         case 0xFF16:
             apu.ch2.duty = Int(v >> 6)
             apu.ch2.length = 64 - Int(v & 0x3F)
@@ -271,7 +281,7 @@ extension GameBoyCore {
         case 0xFF18: apu.ch2.freq = (apu.ch2.freq & 0x700) | Int(v)
         case 0xFF19:
             apu.ch2.freq = (apu.ch2.freq & 0xFF) | (Int(v & 7) << 8)
-            squareLengthAndTrigger(&apu.ch2, v, hasSweep: false)
+            squareLengthAndTrigger(&apu.ch2, v, hasSweep: false, nextClocks: clocks)
         case 0xFF1A:
             apu.ch3.dac = v & 0x80 != 0
             if !apu.ch3.dac { apu.ch3.enabled = false }
@@ -338,20 +348,21 @@ extension GameBoyCore {
         if !ch.dac { ch.enabled = false }
     }
 
-    private func squareLengthAndTrigger(_ ch: inout SquareChannel, _ v: UInt8, hasSweep: Bool) {
+    private func squareLengthAndTrigger(_ ch: inout SquareChannel, _ v: UInt8, hasSweep: Bool, nextClocks: Bool) {
         let wasEnabled = ch.lengthEnabled
         ch.lengthEnabled = v & 0x40 != 0
-        if !wasEnabled && ch.lengthEnabled && !nextStepClocksLength && ch.length > 0 {
+        if !wasEnabled && ch.lengthEnabled && !nextClocks && ch.length > 0 {
             ch.length -= 1
             if ch.length == 0 && v & 0x80 == 0 { ch.enabled = false }
         }
-        if v & 0x80 != 0 { ch.trigger(hasSweep: hasSweep, nextStepClocksLength: nextStepClocksLength) }
+        if v & 0x80 != 0 { ch.trigger(hasSweep: hasSweep, nextStepClocksLength: nextClocks) }
     }
 
     // MARK: Frame sequencer
 
     func apuFrameSequencerStep() {
         guard apu.power else { return }
+        apuMixDirty = true
         let step = apu.frameStep
         if step & 1 == 0 {
             apu.ch1.clockLength(); apu.ch2.clockLength(); clockWaveLength(); apu.ch4.clockLength()
@@ -375,45 +386,26 @@ extension GameBoyCore {
     @inline(__always) func apuAdvance(_ dots: Int) {
         var left = 0, right = 0
         if apu.power {
-            apu.ch1.step(dots)
-            apu.ch2.step(dots)
+            // Only audible channels are stepped: a disabled or zero-volume channel contributes nothing, and its
+            // oscillator phase is reset or irrelevant when it next becomes audible.
+            var changed = false
+            if apu.ch1.enabled && apu.ch1.volume != 0 && apu.ch1.step(dots) { changed = true }
+            if apu.ch2.enabled && apu.ch2.volume != 0 && apu.ch2.step(dots) { changed = true }
             // Wave channel: advance through the 32 four-bit samples.
-            apu.ch3.timer -= dots
-            while apu.ch3.timer <= 0 {
-                apu.ch3.timer += (2048 - apu.ch3.freq) * 2
-                apu.ch3.pos = (apu.ch3.pos + 1) & 31
-            }
-            apu.ch4.step(dots)
-
-            let n51 = apu.nr51
-            var s1 = 0, s2 = 0, s3 = 0, s4 = 0
-            if apu.ch1.dac { s1 = apu.ch1.digital * 2 - 15 }
-            if apu.ch2.dac { s2 = apu.ch2.digital * 2 - 15 }
-            if apu.ch3.dac {
-                var sample = 0
-                if apu.ch3.enabled {
-                    let byte = apuRegs[0x20 + (apu.ch3.pos >> 1)]
-                    sample = Int(apu.ch3.pos & 1 == 0 ? byte >> 4 : byte & 0x0F)
-                    switch apu.ch3.volumeCode {
-                    case 0: sample = 0
-                    case 1: break
-                    case 2: sample >>= 1
-                    default: sample >>= 2
-                    }
+            if apu.ch3.enabled && apu.ch3.volumeCode != 0 { apu.ch3.timer -= dots } else { apu.ch3.timer = max(apu.ch3.timer, 1) }
+            if apu.ch3.timer <= 0 {
+                let before = apuRegs[0x20 + (apu.ch3.pos >> 1)] >> (apu.ch3.pos & 1 == 0 ? 4 : 0) & 0x0F
+                while apu.ch3.timer <= 0 {
+                    apu.ch3.timer += (2048 - apu.ch3.freq) * 2
+                    apu.ch3.pos = (apu.ch3.pos + 1) & 31
                 }
-                s3 = sample * 2 - 15
+                let after = apuRegs[0x20 + (apu.ch3.pos >> 1)] >> (apu.ch3.pos & 1 == 0 ? 4 : 0) & 0x0F
+                if before != after && apu.ch3.enabled && apu.ch3.dac { changed = true }
             }
-            if apu.ch4.dac { s4 = apu.ch4.digital * 2 - 15 }
-            if n51 & 0x10 != 0 { left += s1 }
-            if n51 & 0x20 != 0 { left += s2 }
-            if n51 & 0x40 != 0 { left += s3 }
-            if n51 & 0x80 != 0 { left += s4 }
-            if n51 & 0x01 != 0 { right += s1 }
-            if n51 & 0x02 != 0 { right += s2 }
-            if n51 & 0x04 != 0 { right += s3 }
-            if n51 & 0x08 != 0 { right += s4 }
-            left *= (Int((apu.nr50 >> 4) & 7) + 1) * 64
-            right *= (Int(apu.nr50 & 7) + 1) * 64
+            if apu.ch4.enabled && apu.ch4.volume != 0 && apu.ch4.step(dots) { changed = true }
+            if changed || apuMixDirty { apuRecomputeMix() }
+            left = apuMixL
+            right = apuMixR
         }
         apuAccumL &+= left * dots
         apuAccumR &+= right * dots
@@ -428,5 +420,40 @@ extension GameBoyCore {
             }
             apuAccumL = 0; apuAccumR = 0; apuAccumCount = 0
         }
+    }
+
+    /// Combines the four channel outputs into the cached left/right mix (scaled for 16-bit output).
+    func apuRecomputeMix() {
+        apuMixDirty = false
+        let n51 = apu.nr51
+        var left = 0, right = 0
+        var s1 = 0, s2 = 0, s3 = 0, s4 = 0
+        if apu.ch1.dac { s1 = apu.ch1.digital * 2 - 15 }
+        if apu.ch2.dac { s2 = apu.ch2.digital * 2 - 15 }
+        if apu.ch3.dac {
+            var sample = 0
+            if apu.ch3.enabled {
+                let byte = apuRegs[0x20 + (apu.ch3.pos >> 1)]
+                sample = Int(apu.ch3.pos & 1 == 0 ? byte >> 4 : byte & 0x0F)
+                switch apu.ch3.volumeCode {
+                case 0: sample = 0
+                case 1: break
+                case 2: sample >>= 1
+                default: sample >>= 2
+                }
+            }
+            s3 = sample * 2 - 15
+        }
+        if apu.ch4.dac { s4 = apu.ch4.digital * 2 - 15 }
+        if n51 & 0x10 != 0 { left += s1 }
+        if n51 & 0x20 != 0 { left += s2 }
+        if n51 & 0x40 != 0 { left += s3 }
+        if n51 & 0x80 != 0 { left += s4 }
+        if n51 & 0x01 != 0 { right += s1 }
+        if n51 & 0x02 != 0 { right += s2 }
+        if n51 & 0x04 != 0 { right += s3 }
+        if n51 & 0x08 != 0 { right += s4 }
+        apuMixL = left * (Int((apu.nr50 >> 4) & 7) + 1) * 64
+        apuMixR = right * (Int(apu.nr50 & 7) + 1) * 64
     }
 }

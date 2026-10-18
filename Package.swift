@@ -34,6 +34,7 @@ var targets: [Target] = [
     .testTarget(name: "EmulatorKitTests", dependencies: ["EmulatorKit"]),
     .testTarget(name: "ControllerModelTests", dependencies: ["ControllerModel", "EmulatorKit", "EmuSupport"]),
     .testTarget(name: "CoreTestSupportTests", dependencies: ["CoreTestSupport"]),
+    .testTarget(name: "GBCoreTests", dependencies: ["GBCore", "EmulatorKit", "EmuSupport", "CoreTestSupport"]),
 ]
 
 #if os(macOS)

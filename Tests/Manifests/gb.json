@@ -1,1 +1,15 @@
-{ "system": "gb", "entries": [] }
+{
+  "system": "gb",
+  "entries": [
+    { "name": "dmg-acid2", "path": "acid2/dmg-acid2.gb", "model": "dmg", "maxFrames": 120, "criterion": "frameHash",
+      "expectedHash": "4c9d3c07269e514a", "expected": "pass",
+      "note": "Hash of our output; verified pixel-identical to the suite's reference image (see docs/TESTING.md)." },
+    { "name": "cgb-acid2", "path": "acid2/cgb-acid2.gbc", "model": "cgb", "maxFrames": 120, "criterion": "frameHash",
+      "expectedHash": "64c86aee08f56729", "expected": "pass",
+      "note": "Hash of our output; verified pixel-identical to the suite's reference image." },
+    { "name": "blargg cpu_instrs", "path": "blargg/cpu_instrs.gb", "maxFrames": 6000, "criterion": "serial", "expected": "pass" },
+    { "name": "blargg instr_timing", "path": "blargg/instr_timing.gb", "maxFrames": 1000, "criterion": "serial", "expected": "pass" },
+    { "name": "blargg mem_timing", "path": "blargg/mem_timing.gb", "maxFrames": 1000, "criterion": "serial", "expected": "pass" },
+    { "name": "blargg mem_timing-2", "path": "blargg/mem_timing-2.gb", "maxFrames": 1000, "criterion": "cartram", "expected": "pass" }
+  ]
+}

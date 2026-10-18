@@ -72,13 +72,18 @@ public final class GameBoyCore: EmulatorCore {
     var haltBug = false
     var stopped = false
 
+    // MARK: Debug hooks
+    /// Set when the CPU executes `LD B,B` (opcode 0x40), the breakpoint Mooneye-style tests use to report a result.
+    public internal(set) var hitLDBB = false
+    public var debugRegisters: (b: UInt8, c: UInt8, d: UInt8, e: UInt8, h: UInt8, l: UInt8) { (b, c, d, e, h, l) }
+
     // MARK: Interrupts / timer / serial / joypad
     var ie: UInt8 = 0
     var iflag: UInt8 = 0xE1
     var divCounter: UInt16 = 0
     var tima: UInt8 = 0, tma: UInt8 = 0, tac: UInt8 = 0
     var timaReloadPending = false
-    var timaReloadDelay = 0
+    var timaJustReloaded = false
     var sb: UInt8 = 0, sc: UInt8 = 0
     var serialBits = 0
     var serialCounter = 0
@@ -94,6 +99,8 @@ public final class GameBoyCore: EmulatorCore {
     var oamDMADelay = 0
     var oamDMAIndex = 0
     var oamDMASource = 0
+    var oamDMAPendingSource = 0
+    let oamDMAStartDelay = 2
     var dmaReg: UInt8 = 0xFF
     var hdmaSource: UInt16 = 0
     var hdmaDest: UInt16 = 0
@@ -137,6 +144,8 @@ public final class GameBoyCore: EmulatorCore {
     let lineBG: UnsafeMutablePointer<UInt8>      // colour index 0-3 per pixel
     let lineBGPrio: UnsafeMutablePointer<Bool>   // CGB BG-over-sprite attribute
     let lineClaimed: UnsafeMutablePointer<Bool>
+    let colorLUT: UnsafeMutablePointer<UInt32>   // cached palette colours, see rebuildPaletteCache()
+    var paletteDirty = true
 
     // MARK: APU
     var apu = APUState()
@@ -145,6 +154,9 @@ public final class GameBoyCore: EmulatorCore {
     var apuAccumL = 0
     var apuAccumR = 0
     var apuAccumCount = 0
+    var apuMixL = 0
+    var apuMixR = 0
+    var apuMixDirty = true
 
     public init(media: MediaSource, firmware: FirmwareSet, options: CoreOptions, clock: any HostClock) throws {
         guard case .rom(let data) = media else { throw GameBoyError.invalidROM("expected a ROM image") }
@@ -222,6 +234,7 @@ public final class GameBoyCore: EmulatorCore {
         lineBGPrio = .allocate(capacity: 160); lineBGPrio.initialize(repeating: false, count: 160)
         lineClaimed = .allocate(capacity: 160); lineClaimed.initialize(repeating: false, count: 160)
         apuRegs = .allocate(capacity: 0x30); apuRegs.initialize(repeating: 0, count: 0x30)
+        colorLUT = .allocate(capacity: 96); colorLUT.initialize(repeating: 0xFFFF_FFFF, count: 96)
 
         if options.values["palette"] == "green" {
             dmgColors = [0xFFE0_F8D0, 0xFF88_C070, 0xFF34_6856, 0xFF08_1820]
@@ -235,7 +248,7 @@ public final class GameBoyCore: EmulatorCore {
         rom.deallocate(); cartRAM.deallocate(); vram.deallocate(); wram.deallocate()
         oam.deallocate(); hram.deallocate(); frame.deallocate(); bgPalRAM.deallocate()
         objPalRAM.deallocate(); audioBuf.deallocate(); lineBG.deallocate()
-        lineBGPrio.deallocate(); lineClaimed.deallocate(); apuRegs.deallocate()
+        lineBGPrio.deallocate(); lineClaimed.deallocate(); apuRegs.deallocate(); colorLUT.deallocate()
     }
 
     // MARK: EmulatorCore

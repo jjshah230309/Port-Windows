@@ -36,6 +36,49 @@ if let i = CommandLine.arguments.firstIndex(of: "--gb"), i + 1 < CommandLine.arg
     }
 }
 
+// Full run: rom-test --all [--roms .cache/test-roms] [--manifests Tests/Manifests] [--md report.md]
+// Runs every manifest entry plus the Mooneye suite; exits 1 only on regressions (an expected pass that failed).
+if CommandLine.arguments.contains("--all") {
+    func value(_ flag: String, _ fallback: String) -> String {
+        if let j = CommandLine.arguments.firstIndex(of: flag), j + 1 < CommandLine.arguments.count { return CommandLine.arguments[j + 1] }
+        return fallback
+    }
+    let romRoot = URL(fileURLWithPath: value("--roms", ".cache/test-roms"))
+    let manifestDir = URL(fileURLWithPath: value("--manifests", "Tests/Manifests"))
+    var report = "# ROM test report\n\n"
+    var regressions = 0
+    var all: [(String, [SuiteResult])] = []
+    if let manifests = try? Manifest.loadAll(in: manifestDir) {
+        for m in manifests where m.system == "gb" { all.append(("Manifest (\(m.system))", ROMSuite.runManifest(m, romRoot: romRoot))) }
+    }
+    let mooneyeRoot = romRoot.appendingPathComponent("mooneye/mts-20240926-1737-443f6e1")
+    if FileManager.default.fileExists(atPath: mooneyeRoot.path) {
+        let known = ROMSuite.loadKnownFail(manifestDir.appendingPathComponent("mooneye-known-fail.txt"))
+        let filter = value("--filter", "")
+        all.append(("Mooneye test suite", ROMSuite.runMooneye(root: mooneyeRoot, knownFail: known, filter: filter)))
+    } else {
+        print("Mooneye suite not found under \(romRoot.path); run scripts/fetch-test-roms.sh")
+    }
+    for (title, results) in all {
+        for r in results {
+            let tag: String
+            switch r.outcome {
+            case .pass: tag = r.isImprovement ? "NEW-PASS" : "PASS"
+            case .fail: tag = r.expected == "known-fail" ? "known-fail" : "FAIL"
+            case .skipped: tag = "SKIP"
+            }
+            if tag != "PASS" { print("\(tag.padding(toLength: 10, withPad: " ", startingAt: 0)) \(r.name)  \(r.detail)") }
+        }
+        regressions += results.filter(\.isRegression).count
+        let md = ROMSuite.markdown(title, results)
+        print(md)
+        report += md + "\n"
+    }
+    let mdPath = value("--md", "")
+    if !mdPath.isEmpty { try? report.write(toFile: mdPath, atomically: true, encoding: .utf8) }
+    exit(regressions == 0 ? 0 : 1)
+}
+
 do {
     let manifests = try Manifest.loadAll(in: directory)
     let total = manifests.reduce(0) { $0 + $1.entries.count }

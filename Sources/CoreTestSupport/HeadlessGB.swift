@@ -71,3 +71,25 @@ public enum HeadlessGB {
                            frameHash: frameHash(core), passedByText: verdict)
     }
 }
+
+public enum MooneyeResult: Equatable {
+    case passed, failed, timedOut
+}
+
+public extension HeadlessGB {
+    /// Mooneye-style test: finished when `LD B,B` executes; registers B,C,D,E,H,L = 3,5,8,13,21,34 means pass.
+    static func runMooneye(rom: [UInt8], model: String, maxFrames: Int = 600) throws -> MooneyeResult {
+        let core = try GameBoyCore(media: .rom(rom), firmware: FirmwareSet(), options: CoreOptions(values: ["model": model]),
+                                   clock: FixedClock(seconds: 1_700_000_000))
+        let input = ScriptedInput(), output = NullOutput()
+        for _ in 0..<maxFrames {
+            core.runFrame(input: input, output: output)
+            core.drainAudio { _ in }
+            if core.hitLDBB {
+                let r = core.debugRegisters
+                return (r.b, r.c, r.d, r.e, r.h, r.l) == (3, 5, 8, 13, 21, 34) ? .passed : .failed
+            }
+        }
+        return .timedOut
+    }
+}
