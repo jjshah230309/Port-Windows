@@ -1,4 +1,5 @@
 import CoreHaptics
+import Foundation
 import GameController
 
 /// One continuous haptic event whose intensity is updated every time the cartridge's rumble level changes.
@@ -15,7 +16,7 @@ final class CHHapticEngineBox {
             let event = CHHapticEvent(eventType: .hapticContinuous,
                                       parameters: [CHHapticEventParameter(parameterID: .hapticIntensity, value: 1),
                                                    CHHapticEventParameter(parameterID: .hapticSharpness, value: 0.5)],
-                                      relativeTime: 0, duration: GCHapticDurationInfinite)
+                                      relativeTime: 0, duration: TimeInterval(GCHapticDurationInfinite))
             player = try engine.makePlayer(with: CHHapticPattern(events: [event], parameters: []))
         } catch {
             return nil

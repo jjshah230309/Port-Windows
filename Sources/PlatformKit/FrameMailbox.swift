@@ -29,12 +29,13 @@ public final class FrameMailbox: @unchecked Sendable {
         }
     }
 
-    /// Runs `body` with the newest frame (pixels, width, height, bytes per row, serial). Returns nil if none yet.
-    public func withLatest<R>(_ body: (UnsafeRawPointer, Int, Int, Int, UInt64) -> R) -> R? {
+    /// Runs `body` with the newest frame (pixels, width, height, bytes per row, serial); does nothing if there is none yet.
+    public func withLatest(_ body: (UnsafeRawPointer, Int, Int, Int, UInt64) -> Void) {
         state.withLock { s in
-            guard s.serial > 0, s.width > 0 else { return nil }
-            return s.pixels.withUnsafeBytes { raw in
-                body(raw.baseAddress!, s.width, s.height, s.width * 4, s.serial)
+            guard s.serial > 0, s.width > 0 else { return }
+            let (width, height, serial) = (s.width, s.height, s.serial)
+            s.pixels.withUnsafeBytes { raw in
+                body(raw.baseAddress!, width, height, width * 4, serial)
             }
         }
     }
