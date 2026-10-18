@@ -2,12 +2,16 @@
 
 A native-Swift Mac app for playing games **you own**: Windows PC games (through Wine), PlayStation 1 discs, and Game Boy / Game Boy Color / Game Boy Advance cartridges. It is built with Swift Package Manager and the Command Line Tools only (no Xcode), and has full support for Xbox, DualShock 4, DualSense and DualSense Edge controllers.
 
-> **Status: milestone M0 (scaffolding).** The package layout, controller model, build script, app shell and CI exist. No emulator runs games yet. The full roadmap is in [docs/PLAN.md](docs/PLAN.md).
+> **Status: milestone M1 (Game Boy / Game Boy Color).** A from-scratch Swift Game Boy core runs, with a macOS player (Metal video, audio, keyboard and controller input, battery saves). GBA, PS1 and Windows are later milestones; see [docs/PLAN.md](docs/PLAN.md).
 
 ## What works today
-* `swift build` / `swift test` for the pure-Swift modules (Linux and macOS).
-* A macOS app shell (`Attic.app`) that lists connected controllers and can self-test its Metal shader compiler.
-* The controller input pipeline (deadzones, trigger hysteresis, SOCD), Sony report checksums, input traces and save-state container, all unit tested.
+* **Game Boy and Game Boy Color core** (no boot ROM needed): CPU with M-cycle timing, timers, PPU (DMG and CGB colour), sound, MBC1/2/3 (with clock)/5 (with rumble), battery saves, save states.
+* **Accuracy checks:** Blargg `cpu_instrs`, `instr_timing`, `mem_timing`, `mem_timing-2` pass; dmg-acid2 and cgb-acid2 match their reference images; 81 Mooneye tests pass (the 17 known failures are listed with reasons in `Tests/Manifests/mooneye-known-fail.txt`). See [docs/TESTING.md](docs/TESTING.md).
+* **macOS player:** `Attic --open game.gb`, File > Open, or drag a game onto the window. Keys: arrows, X = A, Z = B, Return = Start, Delete = Select, Tab = fast-forward, P = pause. Game controllers (Xbox, DualShock 4, DualSense) work and rumble on rumble cartridges. **The player has been compiled and self-tested in CI but not yet run on a real Mac**, so expect rough edges.
+* The controller input pipeline (deadzones, trigger hysteresis, SOCD), Sony report checksums, input traces and the save-state container, all unit tested.
+
+## Not done yet (Game Boy)
+Compatibility mode for original-Game-Boy games on colour hardware (palette selection), MBC7 (tilt) cartridges, MBC1 multicart, pixel-exact PPU timing, save-state slots and rewind in the UI, a game library.
 
 ## Build
 ```bash
