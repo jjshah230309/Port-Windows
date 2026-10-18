@@ -1,0 +1,82 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  cores-linux:
+    name: Cores and controller model (Linux)
+    runs-on: ubuntu-latest
+    container: swift:6.1
+    steps:
+      - uses: actions/checkout@v4
+      - run: swift build
+      - run: swift test
+      - run: swift run core-selftest
+      - name: Fetch freely redistributable test ROMs (acid2, Mooneye)
+        run: |
+          apt-get update -qq && apt-get install -y -qq curl unzip ca-certificates
+          scripts/fetch-test-roms.sh
+      - name: ROM test suites (fails only on regressions)
+        run: swift run -c release rom-test --all --md report.md
+      - name: Add report to the job summary
+        if: always()
+        run: cat report.md >> "$GITHUB_STEP_SUMMARY" || true
+
+  macos:
+    name: App (macOS 15)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - run: swift --version
+      - run: swift build
+      - run: swift test
+      - run: swift run core-selftest
+      - run: scripts/build-app.sh
+      - name: Self-test the packaged app
+        run: dist/Attic.app/Contents/MacOS/Attic --self-test
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Attic-macOS
+          if-no-files-found: error
+          path: |
+            dist/*.dmg
+            dist/*.zip
+
+  # Proves the build needs only the Command Line Tools (no Xcode). Non-blocking until the open questions in
+  # docs/PLAN.md section 15 (swift test and @Observable under CLT) are settled.
+  clt-only:
+    name: Build with Command Line Tools only
+    runs-on: macos-15
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Point the toolchain at the Command Line Tools
+        run: |
+          sudo xcode-select -s /Library/Developer/CommandLineTools
+          xcode-select -p
+          swift --version
+      - run: scripts/build-app.sh
+      - run: dist/Attic.app/Contents/MacOS/Attic --self-test
+
+  release:
+    name: Publish release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [cores-linux, macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { path: artifacts, merge-multiple: true }
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          generate_release_notes: true

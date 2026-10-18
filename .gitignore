@@ -1,0 +1,8 @@
+.build/
+.swiftpm/
+dist/
+.cache/
+*.xcodeproj
+.DS_Store
+report.md
+report.xml

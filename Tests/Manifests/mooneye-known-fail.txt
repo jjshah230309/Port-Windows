@@ -1,0 +1,24 @@
+# Mooneye tests we know fail, with the reason. Anything not listed must pass; a listed test that starts passing is reported.
+# Boot-ROM timing (we start from the post-boot state instead of running a boot ROM):
+acceptance/boot_div-dmgABCmgb.gb
+acceptance/boot_hwio-dmgABCmgb.gb
+acceptance/serial/boot_sclk_align-dmgABCmgb.gb
+misc/boot_div-cgb0.gb
+misc/boot_div-cgbABCDE.gb
+# DMG-compatibility mode on colour hardware is not implemented yet:
+misc/boot_regs-cgb.gb
+# PPU interrupt and LCD-enable timing needs a pixel-FIFO-accurate PPU (planned after M1):
+acceptance/ppu/intr_2_mode0_timing.gb
+acceptance/ppu/intr_2_mode0_timing_sprites.gb
+acceptance/ppu/intr_2_mode3_timing.gb
+acceptance/ppu/intr_2_oam_ok_timing.gb
+acceptance/ppu/lcdon_timing-GS.gb
+acceptance/ppu/lcdon_write_timing-GS.gb
+acceptance/ppu/stat_lyc_onoff.gb
+acceptance/ppu/vblank_stat_intr-GS.gb
+# Timer edge case not yet understood:
+acceptance/timer/rapid_toggle.gb
+# MBC1 multicart wiring is not implemented:
+emulator-only/mbc1/multicart_rom_8Mb.gb
+# Needs a Game Boy Pocket (MGB) model:
+madness/mgb_oam_dma_halt_sprites.gb
