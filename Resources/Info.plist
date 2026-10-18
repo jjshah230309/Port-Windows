@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key><string>en</string>
+    <key>CFBundleExecutable</key><string>Attic</string>
+    <key>CFBundleIconFile</key><string>AppIcon</string>
+    <key>CFBundleIdentifier</key><string>io.github.jjshah230309.attic</string>
+    <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+    <key>CFBundleName</key><string>Attic</string>
+    <key>CFBundleDisplayName</key><string>Attic</string>
+    <key>CFBundlePackageType</key><string>APPL</string>
+    <key>CFBundleShortVersionString</key><string>0.0.0</string>
+    <key>CFBundleVersion</key><string>0</string>
+    <key>LSMinimumSystemVersion</key><string>15.0</string>
+    <key>LSApplicationCategoryType</key><string>public.app-category.games</string>
+    <key>NSHighResolutionCapable</key><true/>
+    <key>NSPrincipalClass</key><string>NSApplication</string>
+    <key>GCSupportsGameMode</key><true/>
+    <key>LSSupportsGameMode</key><true/>
+    <key>GCSupportsControllerUserInteraction</key><true/>
+    <key>GCSupportedGameControllers</key>
+    <array>
+        <dict><key>ProfileName</key><string>ExtendedGamepad</string></dict>
+    </array>
+    <key>NSInputMonitoringUsageDescription</key>
+    <string>Only needed if you turn on Advanced controller features (DualSense Edge paddles, mute button, extra lights).</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Only needed if you use the DualSense microphone.</string>
+</dict>
+</plist>
