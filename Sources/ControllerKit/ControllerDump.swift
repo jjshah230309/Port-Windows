@@ -24,7 +24,7 @@ public enum ControllerDump {
             }
             if let m = c.motion {
                 out += "  motion: gravity+userAccel=\(m.hasGravityAndUserAcceleration) "
-                out += "attitude+rotation=\(m.hasAttitudeAndRotationRate) manualActivation=\(m.sensorsRequireManualActivation)\n"
+                out += "attitude=\(m.hasAttitude) rotationRate=\(m.hasRotationRate) manualActivation=\(m.sensorsRequireManualActivation)\n"
             } else {
                 out += "  motion: none\n"
             }

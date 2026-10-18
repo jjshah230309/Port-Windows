@@ -65,7 +65,8 @@ public enum ControllerProbe {
 @MainActor
 public final class ControllerRegistry: ObservableObject {
     @Published public private(set) var controllers: [ConnectedController] = []
-    private var observers: [NSObjectProtocol] = []
+    // Only written in init and read in deinit, so exempt from actor isolation.
+    nonisolated(unsafe) private var observers: [NSObjectProtocol] = []
 
     public init() {
         refresh()
