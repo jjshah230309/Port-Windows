@@ -2,65 +2,130 @@ import AppKit
 import ControllerModel
 import EmulatorKit
 import GameController
+import LibraryKit
 import Synchronization
 
 /// Keyboard state, written by the view on the main thread and read by the emulation thread.
 public final class KeyboardInput: @unchecked Sendable {
-    private let pressed = Mutex<PadButtons>([])
+    private struct State {
+        var held = Set<UInt16>()
+        var bindings = KeyboardBindings()
+    }
 
-    /// Hardware key codes (layout independent): arrows, X = A, Z = B, Return = Start, Delete / Right Shift = Select.
-    private static let map: [UInt16: PadButtons] = [
-        126: .up, 125: .down, 123: .left, 124: .right,
-        7: .east, 6: .south, 36: .start, 51: .select, 60: .select, 56: .select,
-    ]
+    private let state = Mutex(State())
 
     public init() {}
 
     public func handle(keyCode: UInt16, down: Bool) {
-        guard let button = Self.map[keyCode] else { return }
-        pressed.withLock { state in
-            if down { state.insert(button) } else { state.remove(button) }
+        state.withLock { s in
+            if down { s.held.insert(keyCode) } else { s.held.remove(keyCode) }
         }
     }
 
-    public var buttons: PadButtons { pressed.withLock { $0 } }
-}
+    public var heldKeys: Set<UInt16> { state.withLock { $0.held } }
 
-/// Reads the first connected game controller. Positional layout: the right face button is `east`, the bottom one
-/// `south`, on Xbox and PlayStation pads alike (Apple's `buttonB` is the right one, `buttonA` the bottom one).
-public final class GamepadInput: @unchecked Sendable {
-    public init() {}
+    public var bindings: KeyboardBindings {
+        get { state.withLock { $0.bindings } }
+        set { state.withLock { $0.bindings = newValue } }
+    }
 
-    public func buttons() -> PadButtons {
-        guard let pad = GCController.controllers().first?.extendedGamepad else { return [] }
-        var b: PadButtons = []
-        let stick = pad.leftThumbstick
-        if pad.dpad.up.isPressed || stick.yAxis.value > 0.5 { b.insert(.up) }
-        if pad.dpad.down.isPressed || stick.yAxis.value < -0.5 { b.insert(.down) }
-        if pad.dpad.left.isPressed || stick.xAxis.value < -0.5 { b.insert(.left) }
-        if pad.dpad.right.isPressed || stick.xAxis.value > 0.5 { b.insert(.right) }
-        if pad.buttonB.isPressed { b.insert(.east) }
-        if pad.buttonA.isPressed { b.insert(.south) }
-        if pad.buttonY.isPressed { b.insert(.north) }
-        if pad.buttonX.isPressed { b.insert(.west) }
-        if pad.leftShoulder.isPressed { b.insert(.l1) }
-        if pad.rightShoulder.isPressed { b.insert(.r1) }
-        if pad.buttonMenu.isPressed { b.insert(.start) }
-        if pad.buttonOptions?.isPressed == true { b.insert(.select) }
-        return b
+    /// Game buttons for the keys currently held, through the current bindings.
+    public func gameButtons() -> PadButtons {
+        state.withLock { s in
+            var out: PadButtons = []
+            for key in s.held { if let b = s.bindings.button(forKeyCode: key) { out.formUnion(b) } }
+            return out
+        }
     }
 }
 
-/// Merges keyboard and controller into the snapshot a core reads.
-public final class HostInput: InputSource, @unchecked Sendable {
-    public let keyboard = KeyboardInput()
-    public let gamepad = GamepadInput()
+/// Reads the first connected game controller. Element names are Apple's (the same on Xbox, DualShock 4 and DualSense).
+/// Positional layout: the right face button is `east`, the bottom one `south` ("Button B" and "Button A").
+public final class GamepadInput: @unchecked Sendable {
+    private let bindingsState = Mutex(GamepadBindings())
 
     public init() {}
 
+    public var bindings: GamepadBindings {
+        get { bindingsState.withLock { $0 } }
+        set { bindingsState.withLock { $0 = newValue } }
+    }
+
+    public var isConnected: Bool { GCController.controllers().first?.extendedGamepad != nil }
+
+    /// Names of the buttons, triggers and d-pad directions currently pressed.
+    public func heldElements() -> Set<String> {
+        guard let pad = GCController.controllers().first?.extendedGamepad else { return [] }
+        var held = Set<String>()
+        func check(_ name: String, _ button: GCControllerButtonInput?) {
+            if button?.isPressed == true { held.insert(name) }
+        }
+        check("Button A", pad.buttonA); check("Button B", pad.buttonB)
+        check("Button X", pad.buttonX); check("Button Y", pad.buttonY)
+        check("Left Shoulder", pad.leftShoulder); check("Right Shoulder", pad.rightShoulder)
+        check("Left Trigger", pad.leftTrigger); check("Right Trigger", pad.rightTrigger)
+        check("Button Menu", pad.buttonMenu); check("Button Options", pad.buttonOptions)
+        check("Left Thumbstick Button", pad.leftThumbstickButton)
+        check("Right Thumbstick Button", pad.rightThumbstickButton)
+        check("Direction Pad Up", pad.dpad.up); check("Direction Pad Down", pad.dpad.down)
+        check("Direction Pad Left", pad.dpad.left); check("Direction Pad Right", pad.dpad.right)
+        return held
+    }
+
+    /// Left stick position, -1...1, y up.
+    public var leftStick: (x: Float, y: Float) {
+        guard let s = GCController.controllers().first?.extendedGamepad?.leftThumbstick else { return (0, 0) }
+        return (s.xAxis.value, s.yAxis.value)
+    }
+
+    public var rightStick: (x: Float, y: Float) {
+        guard let s = GCController.controllers().first?.extendedGamepad?.rightThumbstick else { return (0, 0) }
+        return (s.xAxis.value, s.yAxis.value)
+    }
+
+    /// Game buttons: d-pad and left stick as directions, plus bound buttons not used by a hotkey chord.
+    public func gameButtons(suppressing suppressed: Set<String>) -> PadButtons {
+        let held = heldElements()
+        var out: PadButtons = []
+        if held.contains("Direction Pad Up") { out.insert(.up) }
+        if held.contains("Direction Pad Down") { out.insert(.down) }
+        if held.contains("Direction Pad Left") { out.insert(.left) }
+        if held.contains("Direction Pad Right") { out.insert(.right) }
+        let stick = leftStick
+        if stick.y > 0.5 { out.insert(.up) }
+        if stick.y < -0.5 { out.insert(.down) }
+        if stick.x < -0.5 { out.insert(.left) }
+        if stick.x > 0.5 { out.insert(.right) }
+        let map = bindings.map
+        for name in held where !suppressed.contains(name) { if let b = map[name] { out.formUnion(b) } }
+        return out
+    }
+}
+
+/// Merges keyboard and controller into the snapshot a core reads, and evaluates hotkeys.
+public final class HostInput: InputSource, @unchecked Sendable {
+    public let keyboard = KeyboardInput()
+    public let gamepad = GamepadInput()
+    private let hotkeyState = Mutex(HotkeyEngine())
+
+    public init() {}
+
+    public var hotkeyEngine: HotkeyEngine {
+        get { hotkeyState.withLock { $0 } }
+        set { hotkeyState.withLock { $0 = newValue } }
+    }
+
+    private func evaluate() -> HotkeyEngine.Evaluation {
+        hotkeyEngine.evaluate(heldKeys: keyboard.heldKeys, heldElements: gamepad.heldElements())
+    }
+
+    /// Hotkey actions currently held (keyboard keys and controller chords).
+    public func heldHotkeys() -> Set<HotkeyAction> { evaluate().actions }
+
     public func snapshot(port: Int) -> InputSnapshot {
+        let e = evaluate()
         var s = InputSnapshot()
-        s.buttons = keyboard.buttons.union(gamepad.buttons())
+        s.buttons = keyboard.gameButtons().union(gamepad.gameButtons(suppressing: e.suppressedElements))
         return s
     }
 }

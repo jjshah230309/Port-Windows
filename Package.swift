@@ -43,12 +43,12 @@ var targets: [Target] = [
 
 #if os(macOS)
 targets += [
-    .target(name: "PlatformKit", dependencies: ["EmulatorKit"]),
-    .target(name: "ControllerKit", dependencies: ["ControllerModel", "EmulatorKit"]),
+    .target(name: "PlatformKit", dependencies: ["EmulatorKit", "ControllerModel", "LibraryKit", "EmuSupport"]),
+    .target(name: "ControllerKit", dependencies: ["ControllerModel", "EmulatorKit", "LibraryKit"]),
     .target(name: "WindowsKit", dependencies: ["WinFormats", "EmuSupport"]),
     .executableTarget(
         name: "Attic",
-        dependencies: ["PlatformKit", "ControllerKit", "WindowsKit", "CoreTestSupport", "GBCore", "EmulatorKit"],
+        dependencies: ["PlatformKit", "ControllerKit", "WindowsKit", "CoreTestSupport", "GBCore", "EmulatorKit", "ControllerModel", "LibraryKit", "EmuSupport"],
         path: "Sources/AtticApp"
     ),
     .executableTarget(name: "controller-dump", dependencies: ["ControllerKit"]),

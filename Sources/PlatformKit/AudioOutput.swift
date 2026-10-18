@@ -42,6 +42,11 @@ public final class AudioOutput: @unchecked Sendable {
         try engine.start()
     }
 
+    /// Master volume 0...1; `muted` silences output without stopping the stream.
+    public func setVolume(_ volume: Float, muted: Bool) {
+        engine.mainMixerNode.outputVolume = muted ? 0 : min(max(volume, 0), 1)
+    }
+
     public func stop() {
         engine.stop()
         if let node { engine.detach(node) }
