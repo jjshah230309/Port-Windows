@@ -38,7 +38,7 @@ public enum SelfTest {
         trace.frames = [frame]
         check((try? ControllerTrace.parse(trace.serialized())) == trace, "controller trace round trip")
 
-        let infos = [GameBoy.info, GameBoyAdvance.info, PlayStation1.info]
+        let infos = [GameBoyCore.info, GameBoyAdvance.info, PlayStation1.info]
         check(infos.allSatisfy { $0.framesPerSecond > 0 }, "system infos have a frame rate")
         return failures
     }
