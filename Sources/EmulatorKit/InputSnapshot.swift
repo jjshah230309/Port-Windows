@@ -1,6 +1,6 @@
 /// Logical buttons as seen by an emulated system, after the host pipeline (deadzones, bindings, SOCD).
 /// Positional layout: `east` is the right face button, `south` the bottom one, regardless of printed labels.
-public struct PadButtons: OptionSet, Sendable, Hashable {
+public struct PadButtons: OptionSet, Sendable, Hashable, Codable {
     public let rawValue: UInt64
     public init(rawValue: UInt64) { self.rawValue = rawValue }
 

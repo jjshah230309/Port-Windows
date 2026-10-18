@@ -1,4 +1,5 @@
 import CoreTestSupport
+import EmuSupport
 import Foundation
 
 // Headless ROM test runner. In M0 it only validates manifests; the cores that execute them arrive from M1 on.
@@ -28,6 +29,10 @@ if let i = CommandLine.arguments.firstIndex(of: "--gb"), i + 1 < CommandLine.arg
             var out = Array("P6\n160 144\n255\n".utf8)
             for px in r.pixels { out += [UInt8((px >> 16) & 0xFF), UInt8((px >> 8) & 0xFF), UInt8(px & 0xFF)] }
             try Data(out).write(to: URL(fileURLWithPath: CommandLine.arguments[j + 1]))
+        }
+        if let j = CommandLine.arguments.firstIndex(of: "--png"), j + 1 < CommandLine.arguments.count {
+            let bytes = r.pixels.withUnsafeBytes { PNGEncoder.encode(bgra: $0, width: 160, height: 144, bytesPerRow: 640) }
+            try Data(bytes).write(to: URL(fileURLWithPath: CommandLine.arguments[j + 1]))
         }
         exit(r.passedByText == false ? 1 : 0)
     } catch {
