@@ -7,6 +7,22 @@ public struct GameHeader: Equatable, Sendable {
     public var headerChecksumValid: Bool
 }
 
+/// What the cartridge header says about a Game Boy Advance ROM.
+public struct GBAHeader: Equatable, Sendable {
+    public var title: String
+    public var gameCode: String
+    public var makerCode: String
+    public var romBytes: Int
+    public var complementCheckValid: Bool
+}
+
+/// A ROM that has been matched to the system it belongs to.
+public struct IdentifiedGame: Equatable, Sendable {
+    public var system: LibrarySystem
+    public var title: String
+    public var isColor: Bool
+}
+
 public enum GameIdentity {
     /// Parses the header at 0x100...0x14F. Returns nil when the file is too small to hold one.
     public static func parseHeader(_ rom: [UInt8]) -> GameHeader? {
@@ -22,9 +38,57 @@ public enum GameIdentity {
                           headerChecksumValid: checksum == rom[0x14D])
     }
 
+    /// Parses the Game Boy Advance header at 0x00...0xBF. Returns nil when the file is too small to hold one.
+    public static func parseGBAHeader(_ rom: [UInt8]) -> GBAHeader? {
+        guard rom.count >= 0xC0 else { return nil }
+        var sum: UInt8 = 0
+        for i in 0xA0...0xBC { sum = sum &+ rom[i] }
+        let title = String(decoding: rom[0xA0..<0xAC].prefix { $0 != 0 }.filter { $0 >= 0x20 && $0 < 0x7F }, as: UTF8.self)
+            .trimmingTrailing()
+        let gameCode = String(decoding: rom[0xAC..<0xB0].filter { $0 >= 0x20 && $0 < 0x7F }, as: UTF8.self)
+            .trimmingTrailing()
+        let makerCode = String(decoding: rom[0xB0..<0xB2].filter { $0 >= 0x20 && $0 < 0x7F }, as: UTF8.self)
+            .trimmingTrailing()
+        // The BIOS expects 0xBD to be the complement of the sum of 0xA0...0xBC.
+        return GBAHeader(title: title, gameCode: gameCode, makerCode: makerCode, romBytes: rom.count,
+                         complementCheckValid: rom[0xBD] == ~sum)
+    }
+
     /// True when the file plausibly is a Game Boy ROM: a header whose checksum matches, which the console itself requires.
     public static func looksLikeGameBoyROM(_ rom: [UInt8]) -> Bool {
         parseHeader(rom)?.headerChecksumValid ?? false
+    }
+
+    /// True when the file plausibly is a Game Boy Advance ROM: a header whose complement check matches.
+    public static func looksLikeGBAROM(_ rom: [UInt8]) -> Bool {
+        parseGBAHeader(rom)?.complementCheckValid ?? false
+    }
+
+    /// Reads the header of a ROM of the given system. Returns nil when the file fails that system's own check.
+    public static func identify(_ rom: [UInt8], for system: LibrarySystem) -> IdentifiedGame? {
+        switch system {
+        case .gameBoy:
+            guard let header = parseHeader(rom), header.headerChecksumValid else { return nil }
+            return IdentifiedGame(system: system, title: header.title, isColor: header.isColor)
+        case .gameBoyAdvance:
+            guard let header = parseGBAHeader(rom), header.complementCheckValid else { return nil }
+            // The CGB flag means nothing here: every GBA cartridge is colour.
+            return IdentifiedGame(system: system, title: header.title, isColor: false)
+        }
+    }
+
+    /// Matches a ROM to the system it belongs to. `preferred` is the system the file extension claims;
+    /// when that check fails the other systems are tried, so a misnamed file still works.
+    public static func identify(_ rom: [UInt8], preferred: LibrarySystem?) -> IdentifiedGame? {
+        var order = LibrarySystem.allCases
+        if let preferred, let i = order.firstIndex(of: preferred) {
+            order.remove(at: i)
+            order.insert(preferred, at: 0)
+        }
+        for system in order {
+            if let game = identify(rom, for: system) { return game }
+        }
+        return nil
     }
 }
 

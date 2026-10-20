@@ -5,7 +5,7 @@ import AppKit
 final class KeyCapture {
     private var monitor: Any?
 
-    func begin(_ completion: @escaping (UInt16) -> Void) {
+    func begin(_ completion: @escaping @MainActor (UInt16) -> Void) {
         cancel()
         monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { [weak self] event in
             let code = event.keyCode
@@ -28,12 +28,14 @@ final class KeyCapture {
 final class ControllerCapture {
     private var timer: Timer?
 
-    func begin(poll: @escaping () -> Set<String>, _ completion: @escaping (String) -> Void) {
+    func begin(poll: @escaping @MainActor () -> Set<String>, _ completion: @escaping @MainActor (String) -> Void) {
         cancel()
         timer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
-            let pressed = poll().filter { !$0.hasPrefix("Direction Pad") }
-            if let name = pressed.sorted().first {
-                Task { @MainActor in
+            // The timer fires on the main run loop, so the closure is already main-actor isolated;
+            // hopping through a Task would risk racing against a later use of `completion`.
+            MainActor.assumeIsolated {
+                let pressed = poll().filter { !$0.hasPrefix("Direction Pad") }
+                if let name = pressed.sorted().first {
                     self?.cancel()
                     completion(name)
                 }

@@ -6,3 +6,10 @@ dist/
 .DS_Store
 report.md
 report.xml
+
+# Local agent scratch directories
+.build-check/
+.build-agent*/
+.build-hot/
+.build-fix-*/
+.build-review-*/
