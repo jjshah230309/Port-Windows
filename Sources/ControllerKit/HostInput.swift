@@ -129,10 +129,9 @@ public final class HostInput: InputSource, @unchecked Sendable {
     public let keyboard = KeyboardInput()
     public let gamepad = GamepadInput()
     private let hotkeyState = Mutex(HotkeyEngine())
-    private let pipelineState = Mutex(InputPipeline())
-    /// The emulated frame the turbo counters run on. The pipeline is a value type, so the frame
-    /// number has to travel with it for turbo to repeat deterministically.
-    private let frame = Atomic<UInt64>(0)
+    /// The pipeline and the state that has to survive between frames: the trigger hysteresis and
+    /// the frame number the turbo settings count on.
+    private let runnerState = Mutex(InputPipelineRunner())
 
     public init() {}
 
@@ -143,14 +142,13 @@ public final class HostInput: InputSource, @unchecked Sendable {
 
     /// The live input pipeline. Its settings drive the sticks, the triggers and the turbo buttons.
     public var pipeline: InputPipeline {
-        get { pipelineState.withLock { $0 } }
-        set { pipelineState.withLock { $0 = newValue } }
+        get { runnerState.withLock { $0.pipeline } }
+        set { runnerState.withLock { $0.update(pipeline: newValue) } }
     }
 
-    /// Advances the emulated-frame counter that turbo counts.
-    public func advanceFrame() {
-        frame.wrappingAdd(1, ordering: .relaxed)
-    }
+    /// The emulated frames processed so far. The turbo settings count on this, so it advances
+    /// once per snapshot rather than on a timer: the rhythm has to match the guest's frame rate.
+    public var framesProcessed: Int { runnerState.withLock { $0.framesProcessed } }
 
     private func evaluate() -> HotkeyEngine.Evaluation {
         hotkeyEngine.evaluate(heldKeys: keyboard.heldKeys, heldElements: gamepad.heldElements())
@@ -171,8 +169,7 @@ public final class HostInput: InputSource, @unchecked Sendable {
         raw.rightStick = gamepad.rightStickVector
         raw.leftTrigger = gamepad.leftTriggerValue
         raw.rightTrigger = gamepad.rightTriggerValue
-        var p = pipeline
-        return p.process(raw, frame: Int(frame.load(ordering: .relaxed)))
+        return runnerState.withLock { $0.process(raw) }
     }
 }
 

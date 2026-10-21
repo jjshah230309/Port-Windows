@@ -27,9 +27,11 @@ private func makeGBAROM(title: String, gameCode: String = "ATSE", makerCode: Str
     for (i, c) in gameCode.utf8.enumerated() { rom[0xAC + i] = c }
     for (i, c) in makerCode.utf8.enumerated() { rom[0xB0 + i] = c }
     for i in 0x134..<0x14E { rom[i] = 0 }                               // not a Game Boy header
-    var sum: UInt8 = 0
-    for i in 0xA0...0xBC { sum = sum &+ rom[i] }
-    rom[0xBD] = valid ? ~sum : (~sum &+ 1)                              // the complement check
+    var sum: Int = 0
+    for i in 0xA0...0xBC { sum += Int(rom[i]) }
+    // The BIOS complement check: 0xBD is -(0x19 + sum(0xA0...0xBC)), taken mod 256.
+    let expected = UInt8(truncatingIfNeeded: -(0x19 + sum))
+    rom[0xBD] = valid ? expected : (expected &+ 1)
     return rom
 }
 
@@ -145,6 +147,27 @@ private func tempDir() throws -> URL {
         let record = try store.add(romAt: url)
         #expect(record.title == "MY ROM")
         #expect(record.system == .gameBoyAdvance)
+    }
+
+    @Test func gameBoyAdvanceComplementCheckUsesTheBIOSFormula() throws {
+        // The BIOS wants 0xBD to be -(0x19 + sum(0xA0...0xBC)) mod 256. A naive "complement of
+        // the sum" is wrong, and because a test helper that used the same wrong formula would
+        // agree with it, the mistake would never show up. This test builds the byte by hand.
+        var rom = [UInt8](repeating: 0, count: 0x8000)
+        for (i, c) in "ADVANCED".utf8.enumerated() { rom[0xA0 + i] = c }
+        rom[0xAC] = 0x41; rom[0xAD] = 0x54; rom[0xAE] = 0x53; rom[0xAF] = 0x45
+        rom[0xB0] = 0x30; rom[0xB1] = 0x31
+        var sum = 0
+        for i in 0xA0...0xBC { sum += Int(rom[i]) }
+        let expected = UInt8(truncatingIfNeeded: -(0x19 + sum))
+        rom[0xBD] = expected
+
+        let header = try #require(GameIdentity.parseGBAHeader(rom))
+        #expect(header.complementCheckValid)
+        // The naive complement of the sum is a different byte, and must not be accepted.
+        #expect(expected != ~UInt8(truncatingIfNeeded: sum))
+        rom[0xBD] = ~UInt8(truncatingIfNeeded: sum)
+        #expect(GameIdentity.parseGBAHeader(rom)?.complementCheckValid == false)
     }
 
     @Test func loadsLegacyLibraryWithoutSystemField() throws {

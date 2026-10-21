@@ -49,9 +49,11 @@ public enum GameIdentity {
             .trimmingTrailing()
         let makerCode = String(decoding: rom[0xB0..<0xB2].filter { $0 >= 0x20 && $0 < 0x7F }, as: UTF8.self)
             .trimmingTrailing()
-        // The BIOS expects 0xBD to be the complement of the sum of 0xA0...0xBC.
+        // The BIOS expects 0xBD to be the complement of the sum of 0xA0...0xBC plus 0x19, which
+        // is what a real cartridge carries. Getting this wrong rejects every genuine ROM.
+        let expected = UInt8(truncatingIfNeeded: -(0x19 + Int(sum)))
         return GBAHeader(title: title, gameCode: gameCode, makerCode: makerCode, romBytes: rom.count,
-                         complementCheckValid: rom[0xBD] == ~sum)
+                         complementCheckValid: rom[0xBD] == expected)
     }
 
     /// True when the file plausibly is a Game Boy ROM: a header whose checksum matches, which the console itself requires.
