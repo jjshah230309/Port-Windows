@@ -83,6 +83,7 @@ var targets: [Target] = [
     testTarget("CoreTestSupportTests", dependencies: ["CoreTestSupport"]),
     testTarget("LibraryKitTests", dependencies: ["LibraryKit", "EmulatorKit", "EmuSupport"]),
     testTarget("GBCoreTests", dependencies: ["GBCore", "EmulatorKit", "EmuSupport", "CoreTestSupport"]),
+    testTarget("GBACoreTests", dependencies: ["GBACore", "EmulatorKit", "EmuSupport", "CoreTestSupport"]),
 ]
 
 #if os(macOS)

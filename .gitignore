@@ -13,3 +13,7 @@ report.xml
 .build-hot/
 .build-fix-*/
 .build-review-*/
+
+# Local workflow scripts
+.build-agent-workflow*.js
+.build-*/

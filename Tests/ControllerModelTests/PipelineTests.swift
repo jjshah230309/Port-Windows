@@ -50,4 +50,92 @@ import EmulatorKit
         #expect(out.buttons.contains(.r2))
         #expect(out.leftStick.x == 1)
     }
+
+    @Test func responseCurveChangesTravelButNotDirection() {
+        var p = InputPipeline()
+        p.leftCurve = .aggressive
+        var raw = RawControllerState()
+        raw.leftStick = SIMD2(0.5, 0)
+        let out = p.process(raw)
+        // Linear would give 0.5 after the deadzone; the cubic curve pulls it in.
+        #expect(out.leftStick.x < 0.5)
+        #expect(out.leftStick.x > 0)
+        #expect(out.leftStick.y == 0)
+    }
+
+    @Test func linearCurveIsTheDefaultAndChangesNothing() {
+        var p = InputPipeline()
+        var raw = RawControllerState()
+        raw.leftStick = SIMD2(0.5, 0)
+        let out = p.process(raw)
+        let expected = Deadzone.radial(SIMD2(0.5, 0), inner: 0.12, outer: 0.97)
+        #expect(abs(out.leftStick.x - expected.x) < 0.0001)
+    }
+
+    @Test func turboPressesOnlyOnItsFrames() {
+        var p = InputPipeline()
+        p.turbo = [.east: TurboSetting(period: 2, phaseOffset: 0)]
+        var raw = RawControllerState()
+        raw.buttons = PadButtons([.east]).rawValue
+        // period 2 means 2 frames on, 2 frames off.
+        #expect(p.process(raw, frame: 0).buttons.contains(.east))
+        #expect(p.process(raw, frame: 1).buttons.contains(.east))
+        #expect(!p.process(raw, frame: 2).buttons.contains(.east))
+        #expect(!p.process(raw, frame: 3).buttons.contains(.east))
+        #expect(p.process(raw, frame: 4).buttons.contains(.east))
+    }
+
+    @Test func turboLeavesOtherButtonsHeld() {
+        var p = InputPipeline()
+        p.turbo = [.east: TurboSetting(period: 2)]
+        var raw = RawControllerState()
+        raw.buttons = PadButtons([.east, .south]).rawValue
+        let out = p.process(raw, frame: 2)
+        #expect(!out.buttons.contains(.east))
+        #expect(out.buttons.contains(.south))
+    }
+
+    @Test func turboWithNoPeriodIsSimplyHeld() {
+        var p = InputPipeline()
+        p.turbo = [.east: TurboSetting(period: 0)]
+        var raw = RawControllerState()
+        raw.buttons = PadButtons([.east]).rawValue
+        for frame in 0..<5 {
+            #expect(p.process(raw, frame: frame).buttons.contains(.east))
+        }
+    }
+
+    @Test func turboPhaseOffsetDecouplesTwoButtons() {
+        var p = InputPipeline()
+        p.turbo = [.east: TurboSetting(period: 2, phaseOffset: 0),
+                   .south: TurboSetting(period: 2, phaseOffset: 2)]
+        var raw = RawControllerState()
+        raw.buttons = PadButtons([.east, .south]).rawValue
+        // At frame 0 the east button is on and the south one is off.
+        let out = p.process(raw, frame: 0)
+        #expect(out.buttons.contains(.east))
+        #expect(!out.buttons.contains(.south))
+    }
+
+    @Test func stickAsDPadAddsDirections() {
+        var p = InputPipeline()
+        p.stickAsDPad = true
+        var raw = RawControllerState()
+        raw.leftStick = SIMD2(0, 1)
+        #expect(p.process(raw).buttons.contains(.up))
+        var p2 = InputPipeline()
+        p2.stickAsDPad = false
+        #expect(!p2.process(raw).buttons.contains(.up))
+    }
+
+    @Test func stickAsDPadRespectsItsGate() {
+        var p = InputPipeline()
+        p.stickAsDPad = true
+        p.stickAsDPadGate = 0.5
+        var raw = RawControllerState()
+        raw.leftStick = SIMD2(0, 0.3)     // under the gate
+        #expect(!p.process(raw).buttons.contains(.up))
+        raw.leftStick = SIMD2(0, 0.8)    // over the gate
+        #expect(p.process(raw).buttons.contains(.up))
+    }
 }

@@ -16,6 +16,23 @@ private func makeROM(title: String, color: Bool = false, salt: UInt8 = 0, valid:
     return rom
 }
 
+/// A fake Game Boy Advance ROM with a valid header (title, game code, complement check).
+/// The Game Boy header area is zeroed so the file can never also pass the Game Boy checksum.
+private func makeGBAROM(title: String, gameCode: String = "ATSE", makerCode: String = "01",
+                        salt: UInt8 = 0, valid: Bool = true) -> [UInt8] {
+    var rom = [UInt8](repeating: salt, count: 0x8000)
+    let titleBytes = Array(title.utf8.prefix(12))
+    for (i, c) in titleBytes.enumerated() { rom[0xA0 + i] = c }
+    for i in titleBytes.count..<12 { rom[0xA0 + i] = 0 }
+    for (i, c) in gameCode.utf8.enumerated() { rom[0xAC + i] = c }
+    for (i, c) in makerCode.utf8.enumerated() { rom[0xB0 + i] = c }
+    for i in 0x134..<0x14E { rom[i] = 0 }                               // not a Game Boy header
+    var sum: UInt8 = 0
+    for i in 0xA0...0xBC { sum = sum &+ rom[i] }
+    rom[0xBD] = valid ? ~sum : (~sum &+ 1)                              // the complement check
+    return rom
+}
+
 private func tempDir() throws -> URL {
     let url = FileManager.default.temporaryDirectory.appendingPathComponent("attic-test-\(UUID().uuidString)")
     try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
@@ -71,6 +88,99 @@ private func tempDir() throws -> URL {
         #expect(result == LibraryStore.ScanResult(added: 2, skipped: 1))
         #expect(Set(store.records.map(\.title)) == ["ONE", "TWO"])
         #expect(store.scan(directory: dir).added == 0)                  // second scan finds nothing new
+    }
+
+    @Test func addsGameBoyAdvanceROM() throws {
+        let dir = try tempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let rom = makeGBAROM(title: "ADVANCED", gameCode: "ATSE", makerCode: "01")
+        let url = dir.appendingPathComponent("advanced.gba")
+        try Data(rom).write(to: url)
+        let header = try #require(GameIdentity.parseGBAHeader(rom))
+        #expect(header.title == "ADVANCED" && header.gameCode == "ATSE" && header.makerCode == "01")
+        #expect(header.complementCheckValid)
+        let store = LibraryStore(fileURL: dir.appendingPathComponent("library.json"))
+        let record = try store.add(romAt: url)
+        #expect(record.system == .gameBoyAdvance)
+        #expect(record.title == "ADVANCED")
+        #expect(record.id == SHA1.hexDigest(rom))
+        #expect(store.records.count == 1)
+        try store.save()
+        let reloaded = LibraryStore(fileURL: dir.appendingPathComponent("library.json"))
+        #expect(reloaded.records.count == 1 && reloaded.records[0].system == .gameBoyAdvance)
+    }
+
+    @Test func rejectsGameBoyAdvanceROMWithBadComplement() throws {
+        let dir = try tempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let rom = makeGBAROM(title: "BROKEN", valid: false)
+        let url = dir.appendingPathComponent("broken.gba")
+        try Data(rom).write(to: url)
+        #expect(GameIdentity.parseGBAHeader(rom)?.complementCheckValid == false)
+        let store = LibraryStore(fileURL: dir.appendingPathComponent("library.json"))
+        #expect(throws: LibraryError.notAGameBoyAdvanceROM("broken.gba")) { try store.add(romAt: url) }
+        #expect(store.records.isEmpty)
+    }
+
+    @Test func scansGameBoyAdvanceROMsToo() throws {
+        let dir = try tempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try Data(makeROM(title: "ONE", salt: 1)).write(to: dir.appendingPathComponent("one.gb"))
+        try Data(makeROM(title: "TWO", color: true, salt: 2)).write(to: dir.appendingPathComponent("two.GBC"))
+        try Data(makeGBAROM(title: "THREE", salt: 3)).write(to: dir.appendingPathComponent("three.gba"))
+        let store = LibraryStore(fileURL: dir.appendingPathComponent("library.json"))
+        let result = store.scan(directory: dir)
+        #expect(result == LibraryStore.ScanResult(added: 3, skipped: 0))
+        #expect(Set(store.records.map(\.system)) == [.gameBoy, .gameBoyAdvance])
+        let gba = try #require(store.records.first { $0.system == .gameBoyAdvance })
+        #expect(gba.title == "THREE")
+    }
+
+    @Test func gameBoyAdvanceROMWithoutTitleFallsBackToFileName() throws {
+        let dir = try tempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let url = dir.appendingPathComponent("MY ROM.gba")
+        try Data(makeGBAROM(title: "")).write(to: url)
+        let store = LibraryStore(fileURL: dir.appendingPathComponent("library.json"))
+        let record = try store.add(romAt: url)
+        #expect(record.title == "MY ROM")
+        #expect(record.system == .gameBoyAdvance)
+    }
+
+    @Test func loadsLegacyLibraryWithoutSystemField() throws {
+        let dir = try tempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let file = dir.appendingPathComponent("library.json")
+        let legacy = """
+        [
+          {
+            "id": "aaaa",
+            "title": "OLD ONE",
+            "path": "/tmp/old-one.gb",
+            "isColor": false,
+            "addedAt": "2020-01-02T03:04:05Z",
+            "lastPlayed": "2021-05-06T07:08:09Z",
+            "playSeconds": 120
+          },
+          {
+            "id": "bbbb",
+            "title": "OLD TWO",
+            "path": "/tmp/old-two.gb",
+            "isColor": true,
+            "addedAt": "2020-01-02T03:04:05Z",
+            "playSeconds": 0
+          }
+        ]
+        """
+        try Data(legacy.utf8).write(to: file)
+        let store = LibraryStore(fileURL: file)
+        #expect(store.records.count == 2)
+        #expect(store.records.allSatisfy { $0.system == .gameBoy })
+        #expect(store.records.map(\.title) == ["OLD ONE", "OLD TWO"])
+        #expect(!FileManager.default.fileExists(atPath: file.appendingPathExtension("corrupt").path))
+        try store.save()                                    // the system field is filled in on the next save
+        let reloaded = LibraryStore(fileURL: file)
+        #expect(reloaded.records.count == 2 && reloaded.records.allSatisfy { $0.system == .gameBoy })
     }
 
     @Test func ordersByLastPlayed() throws {

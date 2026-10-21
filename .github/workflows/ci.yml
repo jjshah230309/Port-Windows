@@ -18,14 +18,26 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: swift build
-      - run: swift test
+      # scripts/run-tests.sh fails the job when the suite runs zero tests, which a plain
+      # `swift test` would happily report as a pass.
+      - run: scripts/run-tests.sh
       - run: swift run core-selftest
+      - name: Check the emulator hot loops
+        run: scripts/check-hot-loops.sh
       - name: Fetch freely redistributable test ROMs (acid2, Mooneye)
         run: |
           apt-get update -qq && apt-get install -y -qq curl unzip ca-certificates
           scripts/fetch-test-roms.sh
       - name: ROM test suites (fails only on regressions)
         run: swift run -c release rom-test --all --md report.md
+      - name: Check that the ROM suites actually ran
+        # rom-test exits 0 when every entry was skipped (for example when the ROMs are
+        # missing), so a run that tested nothing would pass silently. The report counts the
+        # entries that really ran.
+        run: |
+          ran=$(awk '/passed, .* skipped, .* total$/ { n = $0; gsub(/[^0-9]/, " ", n); split(n, a, " "); ran += a[5] - a[4] } END { print ran + 0 }' report.md)
+          echo "ROM suites ran $ran entries"
+          test "$ran" -gt 0
       - name: Add report to the job summary
         if: always()
         run: cat report.md >> "$GITHUB_STEP_SUMMARY" || true
@@ -37,7 +49,10 @@ jobs:
       - uses: actions/checkout@v4
       - run: swift --version
       - run: swift build
-      - run: swift test
+      # scripts/run-tests.sh passes -F for Testing.framework (SwiftPM does not put it on
+      # the framework search path under the Command Line Tools) and fails the job when the
+      # suite runs zero tests.
+      - run: scripts/run-tests.sh
       - run: swift run core-selftest
       - run: scripts/build-app.sh
       - name: Self-test the packaged app
@@ -50,12 +65,10 @@ jobs:
             dist/*.dmg
             dist/*.zip
 
-  # Proves the build needs only the Command Line Tools (no Xcode). Non-blocking until the open questions in
-  # docs/PLAN.md section 15 (swift test and @Observable under CLT) are settled.
+  # Proves the build needs only the Command Line Tools (no Xcode).
   clt-only:
     name: Build with Command Line Tools only
     runs-on: macos-15
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - name: Point the toolchain at the Command Line Tools
@@ -65,6 +78,9 @@ jobs:
           swift --version
       - run: scripts/build-app.sh
       - run: dist/Attic.app/Contents/MacOS/Attic --self-test
+      # The unit tests run under the Command Line Tools too: scripts/run-tests.sh adds the
+      # framework search path that SwiftPM leaves out, and fails on a zero-test run.
+      - run: scripts/run-tests.sh
 
   release:
     name: Publish release

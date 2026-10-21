@@ -83,6 +83,28 @@ public final class GamepadInput: @unchecked Sendable {
         return (s.xAxis.value, s.yAxis.value)
     }
 
+    /// The left stick as a vector, for the input pipeline.
+    public var leftStickVector: SIMD2<Float> {
+        let s = leftStick
+        return SIMD2(s.x, s.y)
+    }
+
+    /// The right stick as a vector, for the input pipeline.
+    public var rightStickVector: SIMD2<Float> {
+        let s = rightStick
+        return SIMD2(s.x, s.y)
+    }
+
+    /// Left trigger travel, 0...1.
+    public var leftTriggerValue: Float {
+        GCController.controllers().first?.extendedGamepad?.leftTrigger.value ?? 0
+    }
+
+    /// Right trigger travel, 0...1.
+    public var rightTriggerValue: Float {
+        GCController.controllers().first?.extendedGamepad?.rightTrigger.value ?? 0
+    }
+
     /// Game buttons: d-pad and left stick as directions, plus bound buttons not used by a hotkey chord.
     public func gameButtons(suppressing suppressed: Set<String>) -> PadButtons {
         let held = heldElements()
@@ -107,12 +129,27 @@ public final class HostInput: InputSource, @unchecked Sendable {
     public let keyboard = KeyboardInput()
     public let gamepad = GamepadInput()
     private let hotkeyState = Mutex(HotkeyEngine())
+    private let pipelineState = Mutex(InputPipeline())
+    /// The emulated frame the turbo counters run on. The pipeline is a value type, so the frame
+    /// number has to travel with it for turbo to repeat deterministically.
+    private let frame = Atomic<UInt64>(0)
 
     public init() {}
 
     public var hotkeyEngine: HotkeyEngine {
         get { hotkeyState.withLock { $0 } }
         set { hotkeyState.withLock { $0 = newValue } }
+    }
+
+    /// The live input pipeline. Its settings drive the sticks, the triggers and the turbo buttons.
+    public var pipeline: InputPipeline {
+        get { pipelineState.withLock { $0 } }
+        set { pipelineState.withLock { $0 = newValue } }
+    }
+
+    /// Advances the emulated-frame counter that turbo counts.
+    public func advanceFrame() {
+        frame.wrappingAdd(1, ordering: .relaxed)
     }
 
     private func evaluate() -> HotkeyEngine.Evaluation {
@@ -124,9 +161,18 @@ public final class HostInput: InputSource, @unchecked Sendable {
 
     public func snapshot(port: Int) -> InputSnapshot {
         let e = evaluate()
-        var s = InputSnapshot()
-        s.buttons = keyboard.gameButtons().union(gamepad.gameButtons(suppressing: e.suppressedElements))
-        return s
+        // The keyboard has no analogue axes, so it goes through the same pipeline to share the
+        // SOCD and turbo rules with the pad.
+        let keyboardButtons = keyboard.gameButtons()
+        let padButtons = gamepad.gameButtons(suppressing: e.suppressedElements)
+        var raw = RawControllerState()
+        raw.buttons = keyboardButtons.union(padButtons).rawValue
+        raw.leftStick = gamepad.leftStickVector
+        raw.rightStick = gamepad.rightStickVector
+        raw.leftTrigger = gamepad.leftTriggerValue
+        raw.rightTrigger = gamepad.rightTriggerValue
+        var p = pipeline
+        return p.process(raw, frame: Int(frame.load(ordering: .relaxed)))
     }
 }
 
