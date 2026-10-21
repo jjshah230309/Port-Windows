@@ -145,12 +145,12 @@ struct GameRow: View {
             if model.hasAutoSave(game) {
                 Button("Resume") { model.play(game, resumeAutoSave: true) }
             }
-            Button("Play") { model.play(game) }.disabled(!game.isAvailable)
+            Button("Play") { model.play(game) }.disabled(!game.isAvailable || !model.canPlay(game))
         }
         .padding(8)
         .background(RoundedRectangle(cornerRadius: 10).fill(selected ? Color.accentColor.opacity(0.18) : Color.clear))
         .contextMenu {
-            Button("Play") { model.play(game) }
+            Button("Play") { model.play(game) }.disabled(!model.canPlay(game))
             if model.hasAutoSave(game) { Button("Resume from Automatic Save") { model.play(game, resumeAutoSave: true) } }
             Divider()
             Menu("Palette for this game") {
@@ -164,7 +164,7 @@ struct GameRow: View {
     }
 
     private var subtitle: String {
-        var parts = [game.isColor ? "Game Boy Color" : "Game Boy"]
+        var parts = [systemName]
         if let last = game.lastPlayed {
             parts.append("played " + last.formatted(.relative(presentation: .named)))
             parts.append(Self.duration(game.playSeconds))
@@ -172,6 +172,14 @@ struct GameRow: View {
             parts.append("not played yet")
         }
         return parts.joined(separator: " · ")
+    }
+
+    /// The system the game runs on. The Game Boy line has a colour variant, the GBA does not.
+    private var systemName: String {
+        switch game.system {
+        case .gameBoy: game.isColor ? "Game Boy Color" : "Game Boy"
+        case .gameBoyAdvance: "Game Boy Advance"
+        }
     }
 
     private static func duration(_ seconds: Double) -> String {

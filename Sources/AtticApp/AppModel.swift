@@ -77,9 +77,9 @@ final class AppModel: ObservableObject {
 
     func presentAddGamePanel() {
         let panel = NSOpenPanel()
-        panel.allowedContentTypes = ["gb", "gbc"].compactMap { UTType(filenameExtension: $0) }
+        panel.allowedContentTypes = LibraryStore.romExtensions.sorted().compactMap { UTType(filenameExtension: $0) }
         panel.allowsMultipleSelection = true
-        panel.message = "Choose Game Boy or Game Boy Color games you own"
+        panel.message = "Choose Game Boy, Game Boy Color or Game Boy Advance games you own"
         if panel.runModal() == .OK { for url in panel.urls { addGame(url: url) } }
     }
 
@@ -87,7 +87,7 @@ final class AppModel: ObservableObject {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
-        panel.message = "Choose a folder to search for Game Boy and Game Boy Color games"
+        panel.message = "Choose a folder to search for Game Boy, Game Boy Color and Game Boy Advance games"
         guard panel.runModal() == .OK, let url = panel.url else { return }
         let result = library.scan(directory: url)
         persistLibrary()
@@ -109,6 +109,8 @@ final class AppModel: ObservableObject {
             return record
         } catch LibraryError.notAGameBoyROM(let name) {
             errorMessage = "\(name) is not a Game Boy or Game Boy Color game."
+        } catch LibraryError.notAGameBoyAdvanceROM(let name) {
+            errorMessage = "\(name) is not a Game Boy Advance game."
         } catch {
             errorMessage = "Could not read \(url.lastPathComponent)."
         }
@@ -134,6 +136,12 @@ final class AppModel: ObservableObject {
 
     func hasAutoSave(_ record: GameRecord) -> Bool {
         SaveStateStore(root: supportDirectory.appendingPathComponent("states"), gameID: record.id).exists(slot: 0)
+    }
+
+    /// Whether the core for this game's system can actually run it yet. The Game Boy Advance
+    /// core has its memory map and its cartridge layer but no CPU, so it cannot play a game.
+    func canPlay(_ record: GameRecord) -> Bool {
+        record.system == .gameBoy
     }
 
     /// A file or folder dropped on the window: folders are scanned, a single game is added and started.
@@ -171,9 +179,18 @@ final class AppModel: ObservableObject {
             let rom = [UInt8](data)
             var options: [String: String] = [:]
             if settings.effectivePalette(for: record.id) == "green" { options["palette"] = "green" }
-            let core = try GameBoyCore(media: .rom(rom), firmware: FirmwareSet(), options: CoreOptions(values: options),
+            let core: any EmulatorCore
+            switch record.system {
+            case .gameBoy:
+                core = try GameBoyCore(media: .rom(rom), firmware: FirmwareSet(), options: CoreOptions(values: options),
                                        clock: SystemClock())
-            let saveURL = supportDirectory.appendingPathComponent("saves/gb/\(record.id).sav")
+            case .gameBoyAdvance:
+                // The GBA core has its memory map and its cartridge layer but no CPU yet, so it
+                // cannot run a game. Say so plainly rather than starting a black screen.
+                errorMessage = "\(record.title) needs the Game Boy Advance core, which is not finished yet."
+                return
+            }
+            let saveURL = supportDirectory.appendingPathComponent("saves/\(record.system.rawValue)/\(record.id).sav")
             if let saved = try? Data(contentsOf: saveURL) { core.loadBatterySave([UInt8](saved)) }
 
             let store = SaveStateStore(root: supportDirectory.appendingPathComponent("states"), gameID: record.id)
