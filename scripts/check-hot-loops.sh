@@ -216,8 +216,9 @@ FNR == NR {
 }
 {
     # The address is the first field; otool prints it bare, objdump prints it with a colon.
+    # objdump also indents the address with spaces, so strip those along with the colon.
     field = $1
-    gsub(":", "", field)
+    gsub(/[: ]/, "", field)
     if (field !~ /^[0-9a-fA-F]+$/) next
     a = hex2dec(field)
     if (a < 0) next
@@ -238,7 +239,8 @@ FNR == NR {
 
     # The mnemonic: otool prints "address<TAB>mnemonic", objdump prints
     # "address:<TAB>bytes<TAB>mnemonic".
-    if ($1 ~ /:$/) m = $3
+    # objdump puts the mnemonic and its operands in one tab-separated field, so keep the first word.
+    if ($1 ~ /:$/) { m = $3; sub(/[ \t].*$/, "", m) }
     else m = $2
 
     b = named($0, banned)
