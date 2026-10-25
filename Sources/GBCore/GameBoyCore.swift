@@ -264,16 +264,27 @@ public final class GameBoyCore: EmulatorCore {
     }
 
     public func runFrame(input: any InputSource, output: any OutputSink) {
-        inputSource = input
-        inputLatched = false
-        frameDone = false
-        rumbleCycles = 0
+        beginFrame(input)
         var cyclesRun = 0
         while !frameDone {
             step()
             cyclesRun &+= 1
             if cyclesRun > 400_000 { break }   // safety valve; a frame is ~17,556 M-cycles
         }
+        endFrame(output)
+    }
+
+    // The per-frame work that touches reference-counted objects (the host's input and output) lives in these
+    // out-of-line helpers, so that the frame loop above stays free of retain/release traffic.
+
+    @inline(never) private func beginFrame(_ input: any InputSource) {
+        inputSource = input
+        inputLatched = false
+        frameDone = false
+        rumbleCycles = 0
+    }
+
+    @inline(never) private func endFrame(_ output: any OutputSink) {
         if !inputLatched { latchInput() }
         inputSource = nil
         if hasRumble {

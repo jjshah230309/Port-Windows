@@ -134,7 +134,8 @@ extension GameBoyCore {
         return [UInt8(total % 60), UInt8((total / 60) % 60), UInt8((total / 3600) % 24), UInt8(day & 0xFF), high]
     }
 
-    func latchRTC() { rtcLatched = rtcRegisters() }
+    /// Copies the running clock into the latched registers. Out of line: it builds an array, and runs only on a latch write.
+    @inline(never) func latchRTC() { rtcLatched = rtcRegisters() }
 
     func writeRTCRegister(_ index: Int, _ v: UInt8) {
         var regs = rtcRegisters()

@@ -1,3 +1,5 @@
+import EmulatorKit
+
 // Memory map, I/O registers, OAM DMA, HDMA, timer, serial and joypad.
 
 extension GameBoyCore {
@@ -153,7 +155,7 @@ extension GameBoyCore {
             if sc & 0x81 == 0x81 {
                 serialBits = 8
                 serialCounter = 0
-                serialOutput.append(sb)
+                captureSerialByte(sb)
             } else {
                 serialBits = 0
             }
@@ -282,12 +284,17 @@ extension GameBoyCore {
         }
     }
 
+    /// Records a transmitted serial byte for test tools. Out of line because appending to an array can allocate.
+    @inline(never) private func captureSerialByte(_ byte: UInt8) { serialOutput.append(byte) }
+
     // MARK: Joypad
 
+    /// Asks the host for the pad state. Out of line because calling through the host's object retains it.
+    @inline(never) private func hostSnapshot() -> InputSnapshot? { inputSource?.snapshot(port: 0) }
+
     func latchInput() {
-        guard !inputLatched, let source = inputSource else { return }
+        guard !inputLatched, let s = hostSnapshot() else { return }
         inputLatched = true
-        let s = source.snapshot(port: 0)
         var buttons: UInt8 = 0
         if s.buttons.contains(.east) { buttons |= 0x01 }      // A
         if s.buttons.contains(.south) { buttons |= 0x02 }     // B
