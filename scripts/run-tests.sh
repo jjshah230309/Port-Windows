@@ -9,7 +9,8 @@
 # actually execute.
 #
 # Zero tests is still a false pass, so this script also reads the summary line that
-# swift-testing prints ("Test run with 56 tests in 12 suites passed") and fails when the
+# swift-testing prints ("Test run with 56 tests in 12 suites passed" or, on Swift 6.1,
+# "Test run with 56 tests passed after 12.3 seconds") and fails when the
 # count is not above zero. `swift test list` and `swift test --list-tests` print the test
 # names instead of running them, so they are exempt from that check.
 #
@@ -113,9 +114,10 @@ if [ "$list_mode" = 1 ]; then
     exit 0
 fi
 
-# swift-testing prints "Test run with 56 tests in 12 suites passed"; XCTest prints
+# swift-testing prints "Test run with 56 tests in 12 suites passed" (newer toolchains) or
+# "Test run with 56 tests passed after 12.3 seconds" (Swift 6.1); XCTest prints
 # "Executed 56 tests, with 0 failures". Take the larger of the two counts.
-swift_tests="$(sed -nE 's/.*Test run with ([0-9]+) tests? in .*/\1/p' "$log" | tail -n 1)"
+swift_tests="$(sed -nE 's/.*Test run with ([0-9]+) tests?( |$).*/\1/p' "$log" | tail -n 1)"
 xctest_tests="$(sed -nE 's/.*Executed ([0-9]+) tests?.*/\1/p' "$log" | tail -n 1)"
 
 count=0
