@@ -128,7 +128,7 @@ struct GBASaveMediaTests {
         // The data byte, least significant bit first.
         if let value {
             var data: [Int] = []
-            for i in 0..<8 { data.append((value >> i) & 1) }
+            for i in 0..<8 { data.append(Int((value >> UInt8(i)) & 1)) }
             for chunk in stride(from: 0, to: data.count, by: size.bitsPerAccess) {
                 var packed: UInt8 = 0
                 for i in 0..<size.bitsPerAccess {
