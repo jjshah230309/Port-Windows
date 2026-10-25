@@ -294,9 +294,68 @@ struct ControlsSettings: View {
                 Text("Hotkeys").font(.headline)
                 Text("Keyboard: F5 save, F8 load, [ and ] change slot, P pause, hold Tab to fast-forward, hold R to rewind.\nController: hold Options (Share / Create / View), then R1 save, L1 load, R2 fast-forward, L2 rewind, Menu pause, D-pad left/right slot.")
                     .font(.callout).foregroundStyle(.secondary)
+                Divider()
+                StickSettings(model: model, title: "Left stick", side: .left)
+                StickSettings(model: model, title: "Right stick", side: .right)
+                Divider()
+                Text("Turbo").font(.headline)
+                Text("A turbo button repeats while it is held: on for a number of frames, then off for the same number.")
+                    .font(.caption).foregroundStyle(.secondary)
+                ForEach(turboButtons, id: \.0) { name, button in
+                    HStack {
+                        Text(name).frame(width: 70, alignment: .leading)
+                        Picker("", selection: Binding(
+                            get: { model.settings.pipeline.turbo[button]?.period ?? 0 },
+                            set: { period in
+                                model.updateSettings { settings in
+                                    if period == 0 {
+                                        settings.pipeline.turbo.removeValue(forKey: button)
+                                    } else {
+                                        settings.pipeline.turbo[button] = TurboSetting(
+                                            period: period,
+                                            phaseOffset: settings.pipeline.turbo[button]?.phaseOffset ?? 0)
+                                    }
+                                }
+                            }
+                        )) {
+                            Text("Off").tag(0)
+                            Text("2 frames").tag(2)
+                            Text("4 frames").tag(4)
+                            Text("6 frames").tag(6)
+                            Text("8 frames").tag(8)
+                        }
+                        .labelsHidden()
+                        .frame(width: 130)
+                        if (model.settings.pipeline.turbo[button]?.period ?? 0) > 0 {
+                            Picker("", selection: Binding(
+                                get: { model.settings.pipeline.turbo[button]?.phaseOffset ?? 0 },
+                                set: { offset in
+                                    model.updateSettings { settings in
+                                        settings.pipeline.turbo[button]?.phaseOffset = offset
+                                    }
+                                }
+                            )) {
+                                Text("No offset").tag(0)
+                                Text("Offset 1").tag(1)
+                                Text("Offset 2").tag(2)
+                                Text("Offset 3").tag(3)
+                            }
+                            .labelsHidden()
+                            .frame(width: 130)
+                        }
+                        Spacer()
+                    }
+                }
             }
             .padding(4)
         }
+    }
+
+    /// The buttons a turbo setting can be given, in the order they are shown.
+    private var turboButtons: [(String, PadButtons)] {
+        [("A", .east), ("B", .south), ("X", .west), ("Y", .north),
+         ("L1", .l1), ("R1", .r1), ("L2", .l2), ("R2", .r2),
+         ("Start", .start), ("Select", .select)]
     }
 
     private func keys(for button: PadButtons) -> String {
@@ -311,6 +370,137 @@ struct ControlsSettings: View {
 }
 
 // MARK: Controllers
+
+/// The deadzone and curve editor for one stick. The plan asks for a live scatter plot; the
+/// plot here is a drawn curve of the stick's travel, which is what the setting changes.
+struct StickSettings: View {
+    @ObservedObject var model: AppModel
+    let title: String
+    /// Which stick this edits.
+    let side: Side
+
+    enum Side {
+        case left, right
+
+        var config: (PipelineSettings) -> StickConfig {
+            switch self {
+            case .left: { $0.leftStick }
+            case .right: { $0.rightStick }
+            }
+        }
+
+        var curve: (PipelineSettings) -> ResponseCurve {
+            switch self {
+            case .left: { $0.leftCurve }
+            case .right: { $0.rightCurve }
+            }
+        }
+
+        func setConfig(_ value: StickConfig, on settings: inout PipelineSettings) {
+            switch self {
+            case .left: settings.leftStick = value
+            case .right: settings.rightStick = value
+            }
+        }
+
+        func setCurve(_ value: ResponseCurve, on settings: inout PipelineSettings) {
+            switch self {
+            case .left: settings.leftCurve = value
+            case .right: settings.rightCurve = value
+            }
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title).font(.headline)
+            HStack {
+                Text("Inner deadzone").frame(width: 130, alignment: .leading)
+                Slider(value: innerBinding, in: 0...0.5)
+                Text(String(format: "%.2f", config.innerDeadzone))
+                    .frame(width: 40, alignment: .trailing).monospacedDigit()
+            }
+            HStack {
+                Text("Outer deadzone").frame(width: 130, alignment: .leading)
+                Slider(value: outerBinding, in: 0.5...1)
+                Text(String(format: "%.2f", config.outerDeadzone))
+                    .frame(width: 40, alignment: .trailing).monospacedDigit()
+            }
+            HStack {
+                Text("Curve").frame(width: 130, alignment: .leading)
+                Picker("", selection: curveBinding) {
+                    ForEach(ResponseCurve.allCases, id: \.self) { curve in
+                        Text(curve.label).tag(curve)
+                    }
+                }
+                .labelsHidden()
+                .frame(width: 160)
+            }
+            TravelPlot(curve: curve, inner: config.innerDeadzone, outer: config.outerDeadzone)
+                .frame(height: 90)
+        }
+    }
+
+    private var config: StickConfig { side.config(model.settings.pipeline) }
+    private var curve: ResponseCurve { side.curve(model.settings.pipeline) }
+
+    private var innerBinding: Binding<Double> {
+        Binding(get: { Double(config.innerDeadzone) },
+                 set: { value in
+                     model.updateSettings { settings in
+                         var updated = side.config(settings.pipeline)
+                         updated.innerDeadzone = Float(value)
+                         side.setConfig(updated, on: &settings.pipeline)
+                     }
+                 })
+    }
+
+    private var outerBinding: Binding<Double> {
+        Binding(get: { Double(config.outerDeadzone) },
+                 set: { value in
+                     model.updateSettings { settings in
+                         var updated = side.config(settings.pipeline)
+                         updated.outerDeadzone = Float(value)
+                         side.setConfig(updated, on: &settings.pipeline)
+                     }
+                 })
+    }
+
+    private var curveBinding: Binding<ResponseCurve> {
+        Binding(get: { curve },
+                 set: { value in model.updateSettings { side.setCurve(value, on: &$0.pipeline) } })
+    }
+}
+
+/// Draws how the stick's travel is shaped: the horizontal axis is the raw travel, the vertical
+/// axis is what the game sees. The deadzone shows as the flat part at the left.
+struct TravelPlot: View {
+    let curve: ResponseCurve
+    let inner: Float
+    let outer: Float
+
+    var body: some View {
+        GeometryReader { geometry in
+            Path { path in
+                let steps = 60
+                for step in 0...steps {
+                    let raw = Float(step) / Float(steps)
+                    let mapped = deadzone(raw)
+                    let x = CGFloat(raw) * geometry.size.width
+                    let y = geometry.size.height - CGFloat(mapped) * geometry.size.height
+                    if step == 0 { path.move(to: CGPoint(x: x, y: y)) } else { path.addLine(to: CGPoint(x: x, y: y)) }
+                }
+            }
+            .stroke(.tint, lineWidth: 2)
+        }
+    }
+
+    /// The same shaping the pipeline applies, so the plot cannot drift from the behaviour.
+    private func deadzone(_ raw: Float) -> Float {
+        let magnitude = min(max(raw - inner, 0) / max(outer - inner, 0.0001), 1)
+        return curve.apply(magnitude)
+    }
+}
 
 struct ControllersSettings: View {
     @ObservedObject var model: AppModel

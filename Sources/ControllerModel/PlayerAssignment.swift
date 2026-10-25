@@ -241,23 +241,27 @@ extension PlayerAssignment {
         let context = Context(game: game, system: system)
         state.withLock { inner in
             guard PlayerAssignment.slotRange.contains(slot) else { return }
-            var table = inner.tables[context] ?? PlayerAssignment.emptyTable()
+            // A game nobody has played has nothing to release, and gains no table by asking.
+            guard var table = inner.tables[context] else { return }
             table[slot - 1] = SlotRecord(controller: nil, connected: true)
             inner.tables[context] = table
         }
     }
 
-    /// Frees the slot a controller holds in a game. Returns the slot it held, if any.
+    /// Frees the slots a controller holds in a game. Returns the slot it was known by, if any.
     @discardableResult
     public func release(controller: ControllerID, game: String, system: String) -> Int? {
         let context = Context(game: game, system: system)
         return state.withLock { inner -> Int? in
-            guard let table = inner.tables[context] else { return nil }
-            guard let index = table.firstIndex(where: { $0.controller == controller }) else { return nil }
-            var updated = table
-            updated[index] = SlotRecord(controller: nil, connected: true)
-            inner.tables[context] = updated
-            return index + 1
+            guard var table = inner.tables[context] else { return nil }
+            // A pad may hold more than one slot, so releasing it means giving up all of them.
+            let held = table.indices.filter { table[$0].controller == controller }
+            guard let lowest = held.first else { return nil }
+            for index in held {
+                table[index] = SlotRecord(controller: nil, connected: true)
+            }
+            inner.tables[context] = table
+            return lowest + 1
         }
     }
 }

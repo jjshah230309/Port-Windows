@@ -55,7 +55,7 @@ public enum SelfTest {
             var writer = StateWriter(system: "gb", gameHash: 0x1234)
             writer.chunk("CPU ", [1, 2, 3])
             guard var reader = try? StateReader(bytes: writer.bytes), let chunk = try? reader.nextChunk() else {
-                return "could not read back the bytes the writer had just produced"
+                return "could not read back the \(writer.bytes.count) bytes the writer had just produced"
             }
             if reader.system != "gb" || reader.gameHash != 0x1234 {
                 return "expected system \"gb\" and game hash 0x1234, saw \"\(reader.system)\" and \(hex(reader.gameHash))"
@@ -65,24 +65,48 @@ public enum SelfTest {
             }
             return nil
         },
+        Check(name: "state codec round trips every chunk it is given") {
+            var writer = StateWriter(system: "gba", gameHash: 0xABCD)
+            let payloads: [(String, [UInt8])] = [("CPU ", [0xAA]), ("MEM ", [0xBB, 0xCC]), ("PPU ", [])]
+            for (tag, payload) in payloads { writer.chunk(tag, payload) }
+            guard var reader = try? StateReader(bytes: writer.bytes) else {
+                return "could not read back the \(writer.bytes.count) bytes the writer had just produced"
+            }
+            var seen: [String: [UInt8]] = [:]
+            while let chunk = try? reader.nextChunk() { seen[chunk.tag] = chunk.payload }
+            for (tag, payload) in payloads {
+                guard let got = seen[tag] else { return "expected the chunk \"\(tag)\" to be read back, saw \(seen.keys.sorted())" }
+                if got != payload { return "expected the chunk \"\(tag)\" to carry \(payload), saw \(got)" }
+            }
+            if seen.count != payloads.count {
+                return "expected \(payloads.count) chunks to be read back, saw \(seen.count): \(seen.keys.sorted())"
+            }
+            return nil
+        },
         Check(name: "deadzone swallows small input") {
             let got = Deadzone.radial(SIMD2(0.05, 0.05), inner: 0.12, outer: 0.97)
-            return got == .zero ? nil : "expected zero, saw (\(got.x), \(got.y))"
+            return got == .zero ? nil : "expected (0, 0), saw (\(got.x), \(got.y))"
         },
         Check(name: "deadzone reaches full scale") {
             let got = Deadzone.radial(SIMD2(1, 0), inner: 0.12, outer: 0.97)
             return got.x == 1 && got.y == 0 ? nil : "expected (1, 0), saw (\(got.x), \(got.y))"
         },
+        Check(name: "deadzone scales a stick between the two radii") {
+            let got = Deadzone.radial(SIMD2(1, 0), inner: 0.0, outer: 2.0)
+            return abs(got.x - 0.5) < 0.0001 ? nil : "expected (0.5, 0), saw (\(got.x), \(got.y))"
+        },
         Check(name: "Sony CRC accepts a good report") {
-            let report = SonyReports.appendingCRC(seed: SonyReports.outputSeed, to: [0x31, 0x02, 0x10, 0x00])
-            return SonyReports.verifyCRC(seed: SonyReports.outputSeed, report: report)
-                ? nil : "expected the appended CRC to verify, saw a mismatch"
+            let body: [UInt8] = [0x31, 0x02, 0x10, 0x00]
+            let expected = SonyReports.crc(seed: SonyReports.outputSeed, payload: body[...])
+            let report = SonyReports.appendingCRC(seed: SonyReports.outputSeed, to: body)
+            return SonyReports.verifyCRC(seed: SonyReports.outputSeed, report: report) ? nil
+                : "expected the report to verify with the CRC \(hex(UInt64(expected))), saw it rejected"
         },
         Check(name: "Sony CRC rejects a corrupted report") {
             var report = SonyReports.appendingCRC(seed: SonyReports.outputSeed, to: [0x31, 0x02, 0x10, 0x00])
             report[0] ^= 0x01
             return SonyReports.verifyCRC(seed: SonyReports.outputSeed, report: report)
-                ? "expected a corrupted report to be rejected, saw it accepted" : nil
+                ? "expected a report whose first byte was flipped from 0x31 to 0x30 to be rejected, saw it accepted" : nil
         },
         Check(name: "controller trace round trip") {
             var trace = ControllerTrace()
@@ -123,7 +147,7 @@ public enum SelfTest {
                     return "expected more than one colour in the frame buffer, saw \(describeColours(colours))"
                 }
                 if audible == 0 {
-                    return "expected audio that is not silent, saw \(samples) samples and every one of them zero"
+                    return "expected audio that is not silent, saw \(samples) samples and none of them non-zero"
                 }
                 return nil
             } catch {
@@ -132,10 +156,20 @@ public enum SelfTest {
         },
         Check(name: "Game Boy core is deterministic") {
             do {
-                let first = try gameBoyFrameHash(frames: 60)
-                let second = try gameBoyFrameHash(frames: 60)
-                return first == second ? nil
-                    : "expected both runs to end on the same frame hash, saw \(hex(first)) and \(hex(second))"
+                // Two cores, each built from its own copy of the ROM, so nothing at all is shared
+                // between the runs: any difference has to come from the core itself.
+                let first = try gameBoyFrameHash(frames: 30)
+                let second = try gameBoyFrameHash(frames: 30)
+                if first != second {
+                    return "expected both 30 frame runs to end on the same frame hash, saw \(hex(first)) and \(hex(second))"
+                }
+                // A core that never draws anything would satisfy the comparison above for the wrong
+                // reason, so the run has to have moved on by the time it is compared.
+                let later = try gameBoyFrameHash(frames: 60)
+                if later == first {
+                    return "expected the frame to change between frames 30 and 60, saw the same hash \(hex(later))"
+                }
+                return nil
             } catch {
                 return "the core could not be built: \(error)"
             }
@@ -143,28 +177,40 @@ public enum SelfTest {
         Check(name: "Game Boy save state round trips through the core") {
             do {
                 let rom = gameBoyROM()
+
+                // The run that never saves: the answer the other run has to reproduce.
                 let straight = try gameBoyCore(rom)
                 run(straight, frames: 30)
-                let earlyHash = HeadlessGB.frameHash(straight)
+                let savedHash = HeadlessGB.frameHash(straight)
                 run(straight, frames: 30)
                 let straightHash = HeadlessGB.frameHash(straight)
-
-                // The frame has to change from one frame to the next, or the comparison below
-                // would pass even if the state had been thrown away and the machine restarted.
-                if earlyHash == straightHash {
+                if savedHash == straightHash {
                     return "expected the frame to change between frames 30 and 60, saw the same hash \(hex(straightHash))"
                 }
 
+                // The run that saves at frame 30, carries on, then loads the state back.
                 let replay = try gameBoyCore(rom)
                 run(replay, frames: 30)
                 var writer = StateWriter(system: "gb", gameHash: XXH64.hash(rom))
                 replay.saveState(into: &writer)
+                let writtenHash = HeadlessGB.frameHash(replay)
                 run(replay, frames: 30)
+                let driftedHash = HeadlessGB.frameHash(replay)
+                if driftedHash == writtenHash {
+                    return "expected the frame to change over the 30 frames after the save, saw the same hash \(hex(driftedHash))"
+                }
+
                 var reader = try StateReader(bytes: writer.bytes)
                 try replay.loadState(from: &reader)
+                // The frame buffer is part of the state, so loading has to put back the frame that
+                // was saved. A load that did nothing would leave the drifted frame in place.
+                let restoredHash = HeadlessGB.frameHash(replay)
+                if restoredHash != savedHash {
+                    return "expected the loaded state to bring back the frame that was saved (\(hex(savedHash))), saw \(hex(restoredHash))"
+                }
+
                 run(replay, frames: 30)
                 let replayHash = HeadlessGB.frameHash(replay)
-
                 return straightHash == replayHash ? nil
                     : "expected the run that never saved to end on \(hex(straightHash)), saw \(hex(replayHash))"
             } catch {
@@ -199,7 +245,20 @@ public enum SelfTest {
     ]
 
     private static let inputChecks: [Check] = [
-        Check(name: "turbo button is pressed on some frames and not on others") {
+        Check(name: "a button with no turbo setting is held on every frame") {
+            var pipeline = InputPipeline()
+            var raw = RawControllerState()
+            raw.buttons = PadButtons([.south]).rawValue
+            var up: [Int] = []
+            for frame in 0..<8 where !pipeline.process(raw, frame: frame).buttons.contains(.south) {
+                up.append(frame)
+            }
+            return up.isEmpty ? nil
+                : "expected the button down on all of frames 0..<8, saw it up on \(up)"
+        },
+        Check(name: "turbo button is down on the frames its period says and up on the rest") {
+            // The same pipeline is used for every frame on purpose: turbo is a pure function of the
+            // frame number, so a cycle that came out of the pipeline's own state would be a bug.
             var pipeline = InputPipeline()
             pipeline.turbo[.south] = TurboSetting(period: 4)
             var raw = RawControllerState()
@@ -207,14 +266,35 @@ public enum SelfTest {
             var pressed: [Int] = []
             var released: [Int] = []
             for frame in 0..<8 {
-                let out = pipeline.process(raw, frame: frame)
-                if out.buttons.contains(.south) { pressed.append(frame) } else { released.append(frame) }
+                if pipeline.process(raw, frame: frame).buttons.contains(.south) { pressed.append(frame) } else { released.append(frame) }
             }
-            if pressed.isEmpty {
-                return "expected the turbo button down on some of frames 0..<8, saw it up on all of them"
+            let expected = [0, 1, 2, 3]
+            guard pressed == expected else {
+                return "expected the turbo button down on frames \(expected) and up on \(Array(0..<8).filter { !expected.contains($0) }), saw it down on \(pressed)"
             }
-            if released.isEmpty {
-                return "expected the turbo button up on some of frames 0..<8, saw it down on all of them"
+            guard released == [4, 5, 6, 7] else {
+                return "expected the turbo button up on frames [4, 5, 6, 7], saw it up on \(released)"
+            }
+            return nil
+        },
+        Check(name: "two turbo buttons with different phases do not fire in lockstep") {
+            var pipeline = InputPipeline()
+            pipeline.turbo[.south] = TurboSetting(period: 4, phaseOffset: 0)
+            pipeline.turbo[.east] = TurboSetting(period: 4, phaseOffset: 4)
+            var raw = RawControllerState()
+            raw.buttons = PadButtons([.south, .east]).rawValue
+            var south: [Int] = []
+            var east: [Int] = []
+            for frame in 0..<8 {
+                let buttons = pipeline.process(raw, frame: frame).buttons
+                if buttons.contains(.south) { south.append(frame) }
+                if buttons.contains(.east) { east.append(frame) }
+            }
+            guard south == [0, 1, 2, 3] else {
+                return "expected the first turbo button down on frames [0, 1, 2, 3], saw \(south)"
+            }
+            guard east == [4, 5, 6, 7] else {
+                return "expected the second turbo button down on frames [4, 5, 6, 7], saw \(east)"
             }
             return nil
         },
@@ -294,7 +374,7 @@ public enum SelfTest {
     }
 
     /// A Game Boy Advance cartridge: the header the BIOS checks, a branch to the program and a
-    /// program that only branches to itself, because the core has no CPU yet.
+    /// program that only branches to itself.
     private static func gameBoyAdvanceROM() -> [UInt8] {
         var rom = [UInt8](repeating: 0, count: 0x8000)
         rom[0x00] = 0xEA; rom[0x01] = 0x00; rom[0x02] = 0x00; rom[0x03] = 0x3B         // B $C0

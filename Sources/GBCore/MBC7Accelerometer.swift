@@ -10,8 +10,11 @@
 ///
 /// The register map follows the project's own MBC7 notes, which read X and Y as 16-bit values at
 /// 0xA020 and 0xA030 and put the tilt and rotation registers at 0xA060 and 0xA080. The Pan Docs
-/// map differs: it splits X and Y into separate low and high byte registers and puts the serial
-/// EEPROM at 0xA080. This mapper follows the project notes.
+/// map differs: it splits X and Y into separate low and high byte registers, takes the latch
+/// sequence on 0xA000 and 0xA010 rather than on 0xA000 alone, leaves the accelerometer at $8000
+/// until the first latch rather than at the centre, and puts the serial EEPROM at 0xA080. This
+/// mapper follows the project notes, whose centre value and signs were confirmed against
+/// Kirby's calibration screen.
 public struct MBC7Accelerometer: Sendable, Equatable {
 
     // MARK: Constants

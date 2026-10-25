@@ -64,7 +64,7 @@ var targets: [Target] = [
     .target(name: "PS1Core", dependencies: ["EmulatorKit", "EmuSupport", "DiscFormats"], swiftSettings: hot),
 
     // Library, save-state slots and settings (Foundation only).
-    .target(name: "LibraryKit", dependencies: ["EmulatorKit", "EmuSupport"]),
+    .target(name: "LibraryKit", dependencies: ["EmulatorKit", "EmuSupport", "ControllerModel"]),
 
     // Controller logic that needs no Apple frameworks.
     .target(name: "ControllerModel", dependencies: ["EmulatorKit", "EmuSupport"]),
@@ -81,7 +81,7 @@ var targets: [Target] = [
     testTarget("EmulatorKitTests", dependencies: ["EmulatorKit"]),
     testTarget("ControllerModelTests", dependencies: ["ControllerModel", "EmulatorKit", "EmuSupport"]),
     testTarget("CoreTestSupportTests", dependencies: ["CoreTestSupport"]),
-    testTarget("LibraryKitTests", dependencies: ["LibraryKit", "EmulatorKit", "EmuSupport"]),
+    testTarget("LibraryKitTests", dependencies: ["LibraryKit", "EmulatorKit", "EmuSupport", "ControllerModel"]),
     testTarget("GBCoreTests", dependencies: ["GBCore", "EmulatorKit", "EmuSupport", "CoreTestSupport"]),
     testTarget("GBACoreTests", dependencies: ["GBACore", "EmulatorKit", "EmuSupport", "CoreTestSupport"]),
 ]

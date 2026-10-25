@@ -1,3 +1,4 @@
+import ControllerModel
 import EmulatorKit
 import Foundation
 
@@ -22,6 +23,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var keyboardOverrides: [String: UInt64] = [:]
     /// Controller remaps: Apple element name (such as "Button A") -> PadButtons raw value.
     public var gamepadOverrides: [String: UInt64] = [:]
+    /// The deadzones, curves, trigger thresholds and turbo buttons the input pipeline uses.
+    public var pipeline = PipelineSettings()
     public var perGame: [String: GameSettings] = [:]
 
     public init() {}

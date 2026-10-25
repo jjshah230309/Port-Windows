@@ -62,6 +62,7 @@ final class AppModel: ObservableObject {
         input.keyboard.bindings = KeyboardBindings(overrides: settings.keyboardOverrides)
         input.gamepad.bindings = GamepadBindings(overrides: settings.gamepadOverrides)
         audio.setVolume(settings.volume, muted: settings.muted)
+        input.apply(settings: settings.pipeline)
         gameView?.scalingMode = (current.map { settings.effectiveScaling(for: $0.id) } ?? settings.scaling) == "sharpBilinear"
             ? .sharpBilinear : .integer
     }

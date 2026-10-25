@@ -146,6 +146,14 @@ public final class HostInput: InputSource, @unchecked Sendable {
         set { runnerState.withLock { $0.update(pipeline: newValue) } }
     }
 
+    /// Applies the user's pipeline settings to the live input. The frame counter is kept, so a
+    /// settings change does not restart the turbo rhythm.
+    public func apply(settings: PipelineSettings) {
+        runnerState.withLock { runner in
+            settings.apply(to: &runner)
+        }
+    }
+
     /// The emulated frames processed so far. The turbo settings count on this, so it advances
     /// once per snapshot rather than on a timer: the rhythm has to match the guest's frame rate.
     public var framesProcessed: Int { runnerState.withLock { $0.framesProcessed } }

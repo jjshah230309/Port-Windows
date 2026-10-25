@@ -18,7 +18,32 @@ private typealias SlotChange = PlayerAssignment.SlotChange
         ControllerID(family: .xboxOne, serial: serial, vidPid: 0x045E, transport: .usb)
     }
 
-    // MARK: - Claiming a slot
+    // MARK: - The shape of a game's slots
+
+    @Test func everyGameOffersEightSlots() {
+        #expect(PlayerAssignment.slotCount == 8)
+        #expect(PlayerAssignment.slotRange == 1...8)
+        // A game nobody has played still has its eight slots, numbered as the UI shows them.
+        let slots = PlayerAssignment().slots(game: game, system: system)
+        #expect(slots.count == 8)
+        #expect(slots.map(\.number) == Array(1...8))
+        #expect(slots.allSatisfy { $0.isFree })
+    }
+
+    @Test func aClaimedSlotNamesItsHolder() {
+        let assignment = PlayerAssignment()
+        #expect(assignment.claim(slot: 2, for: pad("a"), game: game, system: system) == .claimed(slot: 2))
+        let slots = assignment.slots(game: game, system: system)
+        #expect(slots[1].controller == pad("a"))
+        #expect(!slots[1].isFree)
+        #expect(slots[1].isAwaitingReconnect == false)
+        // The other seven slots are untouched.
+        #expect(slots.filter { $0.number != 2 }.allSatisfy { $0.isFree })
+        #expect(!assignment.isSlotAvailable(2, game: game, system: system))
+        #expect((1...8).filter { assignment.isSlotAvailable($0, game: game, system: system) } == [1, 3, 4, 5, 6, 7, 8])
+    }
+
+    // MARK: - Claiming a named slot
 
     @Test func claimingAFreeSlotTakesIt() {
         let assignment = PlayerAssignment()
@@ -26,6 +51,15 @@ private typealias SlotChange = PlayerAssignment.SlotChange
         #expect(assignment.controller(in: 1, game: game, system: system) == pad("a"))
         #expect(assignment.slot(for: pad("a"), game: game, system: system) == 1)
         #expect(!assignment.isSlotAvailable(1, game: game, system: system))
+    }
+
+    @Test func theClaimedSlotIsTheOneThatWasAskedFor() {
+        let assignment = PlayerAssignment()
+        // Not the first free slot: the slot asked for.
+        #expect(assignment.claim(slot: 6, for: pad("a"), game: game, system: system) == .claimed(slot: 6))
+        #expect(assignment.controller(in: 6, game: game, system: system) == pad("a"))
+        #expect(assignment.controller(in: 1, game: game, system: system) == nil)
+        #expect(assignment.slot(for: pad("a"), game: game, system: system) == 6)
     }
 
     @Test func aSlotAnotherControllerHoldsIsRefused() {
@@ -64,13 +98,6 @@ private typealias SlotChange = PlayerAssignment.SlotChange
         #expect(assignment.controller(in: 4, game: game, system: system) == pad("a"))
     }
 
-    @Test func aPressByAPadThatHoldsTwoSlotsReportsTheLowerOne() {
-        let assignment = PlayerAssignment()
-        assignment.claim(slot: 1, for: pad("a"), game: game, system: system)
-        assignment.claim(slot: 4, for: pad("a"), game: game, system: system)
-        #expect(assignment.claim(button: .south, for: pad("a"), game: game, system: system) == .alreadyAssigned(slot: 1))
-    }
-
     @Test func slotsOutsideTheRangeAreRefused() {
         let assignment = PlayerAssignment()
         // The slots a game offers are 1 to 8, so 0 and 9 name no slot at all.
@@ -94,11 +121,25 @@ private typealias SlotChange = PlayerAssignment.SlotChange
         #expect(slots.count == 8)
         #expect(slots.map(\.number) == Array(1...8))
         #expect(slots.allSatisfy { !$0.isFree })
+        // Each pad is in the slot it asked for.
+        for number in 1...8 {
+            #expect(assignment.controller(in: number, game: game, system: system) == pad("pad\(number)"))
+        }
         // A ninth pad has nowhere to go.
         #expect(assignment.claim(button: .east, for: pad("nine"), game: game, system: system) == .noFreeSlot)
     }
 
-    // MARK: - Claiming by button
+    @Test func aFullGameRefusesEverySlot() {
+        let assignment = PlayerAssignment()
+        for number in 1...8 {
+            assignment.claim(slot: number, for: pad("pad\(number)"), game: game, system: system)
+        }
+        // Every slot has an owner, so a claim of a named slot is refused, not granted.
+        #expect(assignment.claim(slot: 4, for: pad("nine"), game: game, system: system) == .refused(.slotHeldByOtherController))
+        #expect(assignment.controller(in: 4, game: game, system: system) == pad("pad4"))
+    }
+
+    // MARK: - Claiming by button press
 
     @Test func aButtonPressTakesTheLowestFreeSlot() {
         let assignment = PlayerAssignment()
@@ -121,6 +162,26 @@ private typealias SlotChange = PlayerAssignment.SlotChange
         assignment.release(slot: 1, game: game, system: system)
         // The lowest free slot wins, which is the one that was just freed.
         #expect(assignment.claim(button: .east, for: pad("c"), game: game, system: system) == .claimed(slot: 1))
+    }
+
+    @Test func aPressSkipsASlotWaitingForAnotherPad() {
+        let assignment = PlayerAssignment()
+        assignment.claim(slot: 1, for: pad("a"), game: game, system: system)
+        assignment.disconnect(controller: pad("a"))
+        // Slot 1 is still waiting for its pad, so the press goes to the next free slot.
+        #expect(assignment.claim(button: .south, for: pad("b"), game: game, system: system) == .claimed(slot: 2))
+        #expect(assignment.disconnectedSlots(game: game, system: system) == [1])
+        #expect(assignment.controller(in: 1, game: game, system: system) == pad("a"))
+    }
+
+    @Test func aPressInAFullGameFindsNoSlot() {
+        let assignment = PlayerAssignment()
+        for number in 1...8 {
+            assignment.claim(slot: number, for: pad("pad\(number)"), game: game, system: system)
+        }
+        #expect(assignment.claim(button: .west, for: pad("nine"), game: game, system: system) == .noFreeSlot)
+        // The pads already in the game keep their slots.
+        #expect(assignment.controller(in: 8, game: game, system: system) == pad("pad8"))
     }
 
     // MARK: - Games and systems
@@ -147,6 +208,15 @@ private typealias SlotChange = PlayerAssignment.SlotChange
         assignment.claim(slot: 2, for: pad("a"), game: otherGame, system: system)
         #expect(assignment.slot(for: pad("a"), game: game, system: system) == 1)
         #expect(assignment.slot(for: pad("a"), game: otherGame, system: system) == 2)
+    }
+
+    @Test func aPressInAnotherGameTakesASlotInThatGame() {
+        let assignment = PlayerAssignment()
+        #expect(assignment.claim(button: .south, for: pad("a"), game: game, system: system) == .claimed(slot: 1))
+        // The same pad pressing in another game is a new player there.
+        #expect(assignment.claim(button: .south, for: pad("a"), game: otherGame, system: system) == .claimed(slot: 1))
+        #expect(assignment.slot(for: pad("a"), game: game, system: system) == 1)
+        #expect(assignment.slot(for: pad("a"), game: otherGame, system: system) == 1)
     }
 
     @Test func claimingInAGameWithNoPriorAssignment() {
@@ -181,6 +251,24 @@ private typealias SlotChange = PlayerAssignment.SlotChange
         #expect(assignment.isSlotAvailable(5, game: game, system: system))
         // A pad holding nothing has no slot to release.
         #expect(assignment.release(controller: pad("a"), game: game, system: system) == nil)
+    }
+
+    @Test func releasingByControllerFreesEverySlotItHeld() {
+        let assignment = PlayerAssignment()
+        assignment.claim(slot: 1, for: pad("a"), game: game, system: system)
+        assignment.claim(slot: 4, for: pad("a"), game: game, system: system)
+        // The pad is known by the lowest slot it holds, and goes away from all of them.
+        #expect(assignment.release(controller: pad("a"), game: game, system: system) == 1)
+        #expect(assignment.slot(for: pad("a"), game: game, system: system) == nil)
+        #expect(assignment.isSlotAvailable(1, game: game, system: system))
+        #expect(assignment.isSlotAvailable(4, game: game, system: system))
+    }
+
+    @Test func aPressByAPadThatHoldsTwoSlotsReportsTheLowerOne() {
+        let assignment = PlayerAssignment()
+        assignment.claim(slot: 1, for: pad("a"), game: game, system: system)
+        assignment.claim(slot: 4, for: pad("a"), game: game, system: system)
+        #expect(assignment.claim(button: .south, for: pad("a"), game: game, system: system) == .alreadyAssigned(slot: 1))
     }
 
     @Test func releasingByControllerLeavesTheOtherPadsSlotsAlone() {
@@ -218,15 +306,12 @@ private typealias SlotChange = PlayerAssignment.SlotChange
     @Test func theDisconnectedSlotsAreListed() {
         let assignment = PlayerAssignment()
         assignment.claim(slot: 1, for: pad("a"), game: game, system: system)
-        assignment.claim(slot: 4, for: pad("a"), game: game, system: system)
         assignment.claim(slot: 2, for: pad("b"), game: game, system: system)
 
         let changes = assignment.disconnect(controller: pad("a"))
-        #expect(changes.count == 2)
-        #expect(changes.contains(SlotChange(game: game, system: system, slot: 1)))
-        #expect(changes.contains(SlotChange(game: game, system: system, slot: 4)))
+        #expect(changes == [SlotChange(game: game, system: system, slot: 1)])
         // Only the pad that went away is listed.
-        #expect(assignment.disconnectedSlots(game: game, system: system) == [1, 4])
+        #expect(assignment.disconnectedSlots(game: game, system: system) == [1])
         #expect(assignment.slots(game: game, system: system)[0].isAwaitingReconnect)
         #expect(!assignment.slots(game: game, system: system)[1].isAwaitingReconnect)
     }
@@ -259,6 +344,7 @@ private typealias SlotChange = PlayerAssignment.SlotChange
         // The press that comes back proves the pad is there, so the slot comes back to life.
         #expect(assignment.claim(button: .south, for: pad("a"), game: game, system: system) == .alreadyAssigned(slot: 2))
         #expect(assignment.disconnectedSlots(game: game, system: system).isEmpty)
+        #expect(assignment.controller(in: 2, game: game, system: system) == pad("a"))
     }
 
     @Test func disconnectingTwiceReportsNothingTheSecondTime() {
@@ -272,11 +358,33 @@ private typealias SlotChange = PlayerAssignment.SlotChange
     @Test func aDisconnectedSlotCanBeFreedForAnotherPad() {
         let assignment = PlayerAssignment()
         assignment.claim(slot: 1, for: pad("a"), game: game, system: system)
-        assignment.claim(slot: 2, for: pad("a"), game: game, system: system)
+        assignment.claim(slot: 2, for: pad("b"), game: game, system: system)
         assignment.disconnect(controller: pad("a"))
+        assignment.disconnect(controller: pad("b"))
         #expect(assignment.freeDisconnectedSlots(game: game, system: system) == [1, 2])
         #expect(assignment.isSlotAvailable(1, game: game, system: system))
-        #expect(assignment.claim(slot: 1, for: pad("b"), game: game, system: system) == .claimed(slot: 1))
+        #expect(assignment.claim(slot: 1, for: pad("c"), game: game, system: system) == .claimed(slot: 1))
+    }
+
+    @Test func aFreedSlotGoesToTheNextPress() {
+        let assignment = PlayerAssignment()
+        assignment.claim(slot: 1, for: pad("a"), game: game, system: system)
+        assignment.disconnect(controller: pad("a"))
+        assignment.freeDisconnectedSlots(game: game, system: system)
+        // With the waiting slot given up, the freed slot is the lowest free one.
+        #expect(assignment.claim(button: .north, for: pad("b"), game: game, system: system) == .claimed(slot: 1))
+        #expect(assignment.disconnectedSlots(game: game, system: system).isEmpty)
+    }
+
+    @Test func aPadHoldingTwoSlotsLosesBothWhenItGoesAway() {
+        let assignment = PlayerAssignment()
+        assignment.claim(slot: 1, for: pad("a"), game: game, system: system)
+        assignment.claim(slot: 4, for: pad("a"), game: game, system: system)
+        let changes = assignment.disconnect(controller: pad("a"))
+        #expect(changes.count == 2)
+        #expect(changes.contains(SlotChange(game: game, system: system, slot: 1)))
+        #expect(changes.contains(SlotChange(game: game, system: system, slot: 4)))
+        #expect(assignment.disconnectedSlots(game: game, system: system) == [1, 4])
     }
 
     @Test func aDisconnectIsReportedForEveryGameThePadWasIn() {
@@ -287,6 +395,17 @@ private typealias SlotChange = PlayerAssignment.SlotChange
         #expect(changes.count == 2)
         #expect(changes.contains(SlotChange(game: game, system: system, slot: 1)))
         #expect(changes.contains(SlotChange(game: otherGame, system: system, slot: 3)))
+        // Each game lists its own waiting slot.
+        #expect(assignment.disconnectedSlots(game: game, system: system) == [1])
+        #expect(assignment.disconnectedSlots(game: otherGame, system: system) == [3])
+    }
+
+    @Test func reconnectingAPadThatNeverWentAwayDoesNothing() {
+        let assignment = PlayerAssignment()
+        assignment.claim(slot: 1, for: pad("a"), game: game, system: system)
+        #expect(assignment.reconnect(controller: pad("a")).isEmpty)
+        #expect(assignment.disconnectedSlots(game: game, system: system).isEmpty)
+        #expect(assignment.controller(in: 1, game: game, system: system) == pad("a"))
     }
 
     // MARK: - The active game
@@ -304,6 +423,17 @@ private typealias SlotChange = PlayerAssignment.SlotChange
         #expect(!assignment.isSlotAvailable(1))
         #expect(assignment.slots().count == 8)
         #expect(assignment.slots()[0].controller == pad("a"))
+    }
+
+    @Test func switchingTheActiveGameSwitchesTheTable() {
+        let assignment = PlayerAssignment()
+        assignment.claim(slot: 1, for: pad("a"), game: game, system: system)
+        assignment.claim(slot: 1, for: pad("b"), game: otherGame, system: system)
+
+        assignment.activate(game: game, system: system)
+        #expect(assignment.slots()[0].controller == pad("a"))
+        assignment.activate(game: otherGame, system: system)
+        #expect(assignment.slots()[0].controller == pad("b"))
     }
 
     @Test func theActiveGameIsTheOneWhoseDisconnectedSlotsAreListed() {
@@ -355,6 +485,19 @@ private typealias SlotChange = PlayerAssignment.SlotChange
         #expect(restored.snapshot() == assignment.snapshot())
     }
 
+    @Test func theSnapshotKeepsGamesAndSystemsApart() throws {
+        let assignment = PlayerAssignment()
+        assignment.claim(slot: 1, for: pad("a"), game: game, system: system)
+        assignment.claim(slot: 1, for: pad("b"), game: game, system: otherSystem)
+        assignment.claim(slot: 1, for: pad("c"), game: otherGame, system: system)
+
+        let data = try JSONEncoder().encode(assignment.snapshot())
+        let restored = PlayerAssignment(snapshot: try JSONDecoder().decode(PlayerAssignment.Snapshot.self, from: data))
+        #expect(restored.controller(in: 1, game: game, system: system) == pad("a"))
+        #expect(restored.controller(in: 1, game: game, system: otherSystem) == pad("b"))
+        #expect(restored.controller(in: 1, game: otherGame, system: system) == pad("c"))
+    }
+
     @Test func aDisconnectedSlotSurvivesTheSnapshot() throws {
         let assignment = PlayerAssignment()
         assignment.claim(slot: 1, for: pad("a"), game: game, system: system)
@@ -399,7 +542,7 @@ private typealias SlotChange = PlayerAssignment.SlotChange
         // The slots are written in order, slot 1 first, so the file can be read back as a table.
         #expect(slots.compactMap { $0["number"] as? Int } == Array(1...8))
         // A slot whose pad has gone away says so, and still names the pad it was waiting for.
-        let second = try #require(slots[1])
+        let second = slots[1]
         #expect(second["connected"] as? Bool == false)
         #expect(second["controller"] as? [String: Any] != nil)
     }
